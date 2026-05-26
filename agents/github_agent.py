@@ -55,24 +55,35 @@ Give a professional summary and suggest improvements."""
         return self.run(task)
 
     def handle(self, task: str) -> str:
-        task_lower = task.lower()
-        if "readme" in task_lower:
-            # Extract repo name from task
-            words = task.split()
-            for word in words:
-                if word not in ["generate", "create", "make", "readme", "for", "the", "a"]:
-                    try:
-                        return self.generate_readme(word)
-                    except:
-                        continue
-            return "Please specify a repo name. Example: 'generate readme for SheetSense'"
-        elif "commit" in task_lower:
+        t = task.lower()
+        if "readme" in t:
+            params = self.extract_intent(task, {
+                "repo_name": "string, the GitHub repository name"
+            })
+            repo_name = params.get("repo_name")
+            if not repo_name:
+                # Fallback: try word-by-word
+                words = task.split()
+                stop_words = {"generate", "create", "make", "readme", "for", "the", "a", "my"}
+                for word in words:
+                    if word.lower() not in stop_words and len(word) > 2:
+                        try:
+                            return self.generate_readme(word)
+                        except Exception:
+                            continue
+                return "Please specify a repo name. Example: 'generate readme for SheetSense'"
+            return self.generate_readme(repo_name)
+
+        elif "commit" in t:
             changes = task.replace("commit message for", "").replace("generate commit", "").strip()
             return self.generate_commit_message(changes)
-        elif "profile" in task_lower or "summary" in task_lower:
+
+        elif any(kw in t for kw in ["profile", "summary"]):
             return self.profile_summary()
-        elif "repos" in task_lower or "list" in task_lower:
+
+        elif any(kw in t for kw in ["repos", "list", "my repos"]):
             repos = self.get_repos()
             return "\n".join([f"📁 {r['name']} — {r['language']} — {r['url']}" for r in repos])
+
         else:
             return self.run(task)

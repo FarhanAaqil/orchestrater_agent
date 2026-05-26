@@ -242,73 +242,99 @@ mutation PublishPost($input: PublishPostInput!) {
     def handle(self, task: str) -> str:
         t = task.lower()
 
-        if "linkedin post" in t:
-            parts = task.replace("generate linkedin post", "").replace("linkedin post for", "").strip().split(",")
-            project = parts[0].strip()
-            achievement = parts[1].strip() if len(parts) > 1 else ""
+        if any(kw in t for kw in ["linkedin post"]):
+            params = self.extract_intent(task, {
+                "project": "string, the project or topic to post about",
+                "achievement": "string or null, any specific achievement to highlight"
+            })
+            project = params.get("project") or task.replace("generate linkedin post", "").replace("linkedin post for", "").strip()
+            achievement = params.get("achievement") or ""
             return self.generate_linkedin_post(project, achievement)
 
-        elif "twitter thread" in t or "x thread" in t:
-            parts = task.replace("generate twitter thread", "").replace("twitter thread for", "").strip().split(",")
-            project = parts[0].strip()
-            points = parts[1].strip() if len(parts) > 1 else ""
+        elif any(kw in t for kw in ["twitter thread", "x thread"]):
+            params = self.extract_intent(task, {
+                "project": "string, the project or topic",
+                "key_points": "string or null, specific points to cover"
+            })
+            project = params.get("project") or task.replace("generate twitter thread", "").replace("twitter thread for", "").strip()
+            points = params.get("key_points") or ""
             return self.generate_twitter_thread(project, points)
 
-        elif "blog post" in t or "hashnode" in t and "generate" in t:
-            parts = task.replace("generate blog post", "").replace("blog post for", "").strip().split(",")
-            project = parts[0].strip()
-            details = parts[1].strip() if len(parts) > 1 else ""
+        elif any(kw in t for kw in ["blog post", "hashnode"]) and "generate" in t:
+            params = self.extract_intent(task, {
+                "project": "string, the project or topic for the blog post",
+                "details": "string or null, any specific details to include"
+            })
+            project = params.get("project") or task.replace("generate blog post", "").replace("blog post for", "").strip()
+            details = params.get("details") or ""
             return self.generate_blog_post(project, details)
 
         elif "devlog" in t:
-            parts = task.replace("generate devlog", "").replace("devlog", "").strip().split(",")
-            day = int(''.join(filter(str.isdigit, parts[0]))) if parts[0] else 1
-            built = parts[1].strip() if len(parts) > 1 else task
-            challenges = parts[2].strip() if len(parts) > 2 else ""
+            params = self.extract_intent(task, {
+                "day": "integer or null, the day number of building",
+                "what_built": "string, what was built or worked on today",
+                "challenges": "string or null, any challenges encountered"
+            })
+            day = params.get("day") or 1
+            built = params.get("what_built") or task
+            challenges = params.get("challenges") or ""
+            try:
+                day = int(day)
+            except (TypeError, ValueError):
+                day = 1
             return self.generate_devlog(day, built, challenges)
 
-        elif "content calendar" in t or "calendar" in t:
+        elif any(kw in t for kw in ["content calendar", "calendar"]):
             weeks = 2
             nums = [int(s) for s in task.split() if s.isdigit()]
-            if nums: weeks = nums[0]
+            if nums:
+                weeks = nums[0]
             return self.content_calendar(weeks)
 
         elif "publish hashnode" in t:
-            parts = task.replace("publish hashnode", "").strip().split(",")
-            title = parts[0].strip()
-            content = parts[1].strip() if len(parts) > 1 else ""
+            params = self.extract_intent(task, {
+                "title": "string, the blog post title",
+                "content": "string or null, the blog post content"
+            })
+            title = params.get("title") or ""
+            content = params.get("content") or ""
             if not content:
-                # Get latest draft
                 drafts = get_content(platform="hashnode", status="draft")
                 if drafts:
                     content = drafts[0]["content"]
-                    title = drafts[0]["title"].replace("Blog: ", "")
+                    title = title or drafts[0]["title"].replace("Blog: ", "")
             result = self.publish_to_hashnode(title, content)
             if result["success"]:
                 return f"✅ Published to Hashnode!\n🔗 {result['url']}"
             return f"❌ Failed: {result['error']}"
 
-        elif "publish devto" in t or "publish dev.to" in t or "publish dev" in t:
-            parts = task.replace("publish devto", "").replace("publish dev", "").strip().split(",")
-            title = parts[0].strip()
-            content = parts[1].strip() if len(parts) > 1 else ""
+        elif any(kw in t for kw in ["publish devto", "publish dev.to", "publish dev"]):
+            params = self.extract_intent(task, {
+                "title": "string, the article title",
+                "content": "string or null, the article content"
+            })
+            title = params.get("title") or ""
+            content = params.get("content") or ""
             if not content:
                 drafts = get_content(platform="hashnode", status="draft")
                 if drafts:
                     content = drafts[0]["content"]
-                    title = drafts[0]["title"].replace("Blog: ", "")
+                    title = title or drafts[0]["title"].replace("Blog: ", "")
             result = self.publish_to_devto(title, content)
             if result["success"]:
                 return f"✅ Published to Dev.to!\n🔗 {result['url']}"
             return f"❌ Failed: {result['error']}"
 
         elif "seo" in t:
-            parts = task.replace("generate seo", "").replace("seo for", "").strip().split(",")
-            title = parts[0].strip()
-            content = parts[1].strip() if len(parts) > 1 else ""
+            params = self.extract_intent(task, {
+                "title": "string, the content title",
+                "content": "string or null, content preview"
+            })
+            title = params.get("title") or task.replace("generate seo", "").replace("seo for", "").strip()
+            content = params.get("content") or ""
             return self.generate_seo_tags(title, content)
 
-        elif "content dashboard" in t or "my content" in t or "show content" in t:
+        elif any(kw in t for kw in ["content dashboard", "my content", "show content"]):
             return self.content_dashboard()
 
         else:

@@ -108,18 +108,18 @@ Keep it polite, short, show continued interest. Don't be desperate."""
         return self.run(task)
 
     def handle(self, task: str) -> str:
-        task_lower = task.lower()
+        t = task.lower()
 
-        if "scrape" in task_lower or "search jobs" in task_lower or "find jobs" in task_lower or "find internships" in task_lower:
+        if any(kw in t for kw in ["scrape", "search jobs", "find jobs", "find internships"]):
             keywords = "AI ML Python intern"
-            if "python" in task_lower:
+            if "python" in t:
                 keywords = "Python developer intern"
-            elif "llm" in task_lower or "langchain" in task_lower:
+            elif "llm" in t or "langchain" in t:
                 keywords = "LLM AI agent intern"
 
             jobs = self.scrape_jobs(keywords=keywords)
-            if not jobs or "error" in jobs[0]:
-                return f"Scraping error: {jobs[0].get('error', 'Unknown')}"
+            if not jobs or (jobs and "error" in jobs[0]):
+                return f"Scraping error: {jobs[0].get('error', 'Unknown') if jobs else 'No results'}"
 
             result = f"Found {len(jobs)} jobs:\n\n"
             for i, job in enumerate(jobs, 1):
@@ -128,30 +128,47 @@ Keep it polite, short, show continued interest. Don't be desperate."""
                 result += f"   🔗 {job['url']}\n\n"
             return result
 
-        elif "connection" in task_lower:
-            parts = task.replace("draft connection", "").replace("for", "").strip().split(",")
-            name = parts[0].strip() if len(parts) > 0 else "the person"
-            role = parts[1].strip() if len(parts) > 1 else "professional"
-            company = parts[2].strip() if len(parts) > 2 else "their company"
+        elif "connection" in t:
+            params = self.extract_intent(task, {
+                "name": "string, the person's full name",
+                "role": "string, their job title or role",
+                "company": "string, the company they work at"
+            })
+            name = params.get("name") or "the professional"
+            role = params.get("role") or "professional"
+            company = params.get("company") or "their company"
             return self.draft_connection_request(name, role, company)
 
-        elif "outreach" in task_lower or "recruiter" in task_lower:
-            parts = task.replace("draft outreach", "").replace("message to", "").strip().split(",")
-            name = parts[0].strip() if len(parts) > 0 else "Recruiter"
-            role = parts[1].strip() if len(parts) > 1 else "HR Manager"
-            company = parts[2].strip() if len(parts) > 2 else "the company"
-            job_title = parts[3].strip() if len(parts) > 3 else ""
+        elif any(kw in t for kw in ["outreach", "recruiter"]):
+            params = self.extract_intent(task, {
+                "name": "string, the recruiter's name",
+                "role": "string, their job title",
+                "company": "string, the company name",
+                "job_title": "string or null, the role Aaqil is interested in"
+            })
+            name = params.get("name") or "Recruiter"
+            role = params.get("role") or "HR Manager"
+            company = params.get("company") or "the company"
+            job_title = params.get("job_title") or ""
             return self.draft_outreach(name, role, company, job_title)
 
-        elif "analyze" in task_lower or "job description" in task_lower:
+        elif any(kw in t for kw in ["analyze", "job description"]):
             jd = task.replace("analyze", "").replace("job description", "").strip()
             return self.analyze_job(jd)
 
-        elif "follow up" in task_lower or "followup" in task_lower:
-            parts = task.split(",")
-            name = parts[0].replace("follow up", "").strip() if len(parts) > 0 else "Recruiter"
-            company = parts[1].strip() if len(parts) > 1 else "the company"
-            days = int(parts[2].strip()) if len(parts) > 2 else 7
+        elif any(kw in t for kw in ["follow up", "followup"]):
+            params = self.extract_intent(task, {
+                "name": "string, the recruiter's name",
+                "company": "string, the company name",
+                "days_ago": "integer or null, days since last contact"
+            })
+            name = params.get("name") or "Recruiter"
+            company = params.get("company") or "the company"
+            days = params.get("days_ago") or 7
+            try:
+                days = int(days)
+            except (TypeError, ValueError):
+                days = 7
             return self.draft_follow_up(name, company, days)
 
         else:

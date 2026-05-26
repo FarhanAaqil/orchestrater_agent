@@ -52,6 +52,10 @@ Always give specific, actionable advice. Never be generic."""
         self._seed_certificates()
 
     def _seed_skills(self):
+        # Guard: only seed if skills table is empty for this agent
+        existing = get_skills()
+        if existing:
+            return  # Already seeded — don't duplicate
         skills = [
             ("Python", "advanced", "Programming"),
             ("Machine Learning", "advanced", "AI/ML"),
@@ -74,6 +78,10 @@ Always give specific, actionable advice. Never be generic."""
             add_skill(name, level, category)
 
     def _seed_certificates(self):
+        # Guard: only seed if no certificates exist
+        existing = get_certificates()
+        if existing:
+            return  # Already seeded
         certs = [
             ("Anthropic Certification 1", "Anthropic", "completed", "", "AI/ML"),
             ("Anthropic Certification 2", "Anthropic", "completed", "", "AI/ML"),
@@ -233,50 +241,63 @@ For each: Name, Provider, Link, Why it matters for Aaqil."""
     def handle(self, task: str) -> str:
         t = task.lower()
 
-        if "tailor resume" in t or "customize resume" in t:
-            jd = task.replace("tailor resume for", "").replace("tailor resume", "").strip()
+        if any(kw in t for kw in ["tailor resume", "customize resume"]):
+            # Use intent extraction for natural language JD
+            jd = task.replace("tailor resume for", "").replace("tailor resume", "").replace("customize resume for", "").strip()
             return self.tailor_resume(jd)
 
-        elif "skill gap" in t or "analyze job" in t:
-            jd = task.replace("skill gap for", "").replace("skill gap", "").strip()
+        elif any(kw in t for kw in ["skill gap", "analyze job"]):
+            jd = task.replace("skill gap for", "").replace("skill gap", "").replace("analyze job", "").strip()
             return self.skill_gap_analysis(jd)
 
-        elif "interview prep" in t or "prepare interview" in t:
-            parts = task.replace("interview prep for", "").replace("prepare interview", "").strip().split(",")
-            company = parts[0].strip() if len(parts) > 0 else "the company"
-            role = parts[1].strip() if len(parts) > 1 else "AI/ML Intern"
-            jd = parts[2].strip() if len(parts) > 2 else ""
+        elif any(kw in t for kw in ["interview prep", "prepare interview", "prep for interview"]):
+            params = self.extract_intent(task, {
+                "company": "string, the company name",
+                "role": "string, the job role or title",
+                "description": "string or null, any job description details"
+            })
+            company = params.get("company") or "the company"
+            role = params.get("role") or "AI/ML Intern"
+            jd = params.get("description") or ""
             return self.generate_interview_prep(company, role, jd)
 
-        elif "suggest cert" in t or "recommend cert" in t or "what cert" in t:
+        elif any(kw in t for kw in ["suggest cert", "recommend cert", "what cert"]):
             return self.suggest_certificates()
 
         elif "add skill" in t:
             return self.add_skill_command(task)
 
         elif "add milestone" in t:
-            parts = task.replace("add milestone", "").strip().split(",")
-            title = parts[0].strip()
-            category = parts[1].strip() if len(parts) > 1 else "general"
-            notes = parts[2].strip() if len(parts) > 2 else ""
+            params = self.extract_intent(task, {
+                "title": "string, the milestone title",
+                "category": "string or null, category like 'research', 'career', 'project'",
+                "notes": "string or null, any additional notes"
+            })
+            title = params.get("title") or task.replace("add milestone", "").strip()[:80]
+            category = params.get("category") or "general"
+            notes = params.get("notes") or ""
             add_milestone(title, category, notes)
             return f"🏆 Milestone added: **{title}**"
 
-        elif "add certificate" in t or "add cert" in t:
-            parts = task.replace("add certificate", "").replace("add cert", "").strip().split(",")
-            title = parts[0].strip()
-            provider = parts[1].strip() if len(parts) > 1 else "Unknown"
-            area = parts[2].strip() if len(parts) > 2 else ""
+        elif any(kw in t for kw in ["add certificate", "add cert"]):
+            params = self.extract_intent(task, {
+                "title": "string, the certificate name",
+                "provider": "string, the issuing organization",
+                "area": "string or null, skill area like AI/ML, Programming"
+            })
+            title = params.get("title") or task.replace("add certificate", "").replace("add cert", "").strip()[:80]
+            provider = params.get("provider") or "Unknown"
+            area = params.get("area") or ""
             add_certificate(title, provider, "completed", "", area)
             return f"📜 Certificate added: **{title}** by {provider}"
 
-        elif "show skills" in t or "my skills" in t:
+        elif any(kw in t for kw in ["show skills", "my skills"]):
             return self.show_skills()
 
-        elif "show cert" in t or "my cert" in t or "certificates" in t:
+        elif any(kw in t for kw in ["show cert", "my cert", "certificates"]):
             return self.show_certs()
 
-        elif "dashboard" in t or "career stats" in t or "career summary" in t:
+        elif any(kw in t for kw in ["dashboard", "career stats", "career summary"]):
             return self.career_dashboard()
 
         else:

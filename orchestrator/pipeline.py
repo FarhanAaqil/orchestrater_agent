@@ -142,7 +142,7 @@ class Pipeline:
 
         # Generate blog
         blog = growth.generate_blog_post(project, details)
-        blog = self.critic.improve("linkedin_post", blog)
+        blog = self.critic.improve("blog_post", blog)  # Fixed: was wrongly using linkedin_post standard
         self.queue_approval(
             "blog", f"Blog Post: {project}", blog,
             "publish_hashnode", {"title": f"Building {project}"}

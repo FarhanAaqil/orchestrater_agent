@@ -167,44 +167,75 @@ Formal academic submission email:
     def handle(self, task: str) -> str:
         t = task.lower()
 
-        if "recruiter email" in t or "outreach email" in t:
-            parts = task.replace("draft recruiter email to", "").replace("outreach email to", "").strip().split(",")
-            name = parts[0].strip()
-            company = parts[1].strip() if len(parts) > 1 else "the company"
-            role = parts[2].strip() if len(parts) > 2 else "AI/ML Intern"
-            email = parts[3].strip() if len(parts) > 3 else ""
+        if any(kw in t for kw in ["recruiter email", "outreach email"]):
+            params = self.extract_intent(task, {
+                "name": "string, the recruiter's name",
+                "company": "string, the company name",
+                "role": "string, the target role or internship",
+                "email": "string or null, email address if mentioned"
+            })
+            name = params.get("name") or "Recruiter"
+            company = params.get("company") or "the company"
+            role = params.get("role") or "AI/ML Intern"
+            email = params.get("email") or ""
             return self.draft_recruiter_email(name, company, role, email)
 
         elif "application email" in t:
-            parts = task.replace("draft application email for", "").replace("application email for", "").strip().split(",")
-            company = parts[0].strip()
-            role = parts[1].strip() if len(parts) > 1 else "AI/ML Intern"
-            jd = parts[2].strip() if len(parts) > 2 else ""
-            email = parts[3].strip() if len(parts) > 3 else ""
+            params = self.extract_intent(task, {
+                "company": "string, the company name",
+                "role": "string, the role to apply for",
+                "description": "string or null, job description details",
+                "email": "string or null, email address"
+            })
+            company = params.get("company") or "the company"
+            role = params.get("role") or "AI/ML Intern"
+            jd = params.get("description") or ""
+            email = params.get("email") or ""
             return self.draft_application_email(company, role, jd, email)
 
-        elif "follow up email" in t or "follow-up email" in t:
-            parts = task.replace("draft follow up email to", "").replace("follow-up email to", "").strip().split(",")
-            name = parts[0].strip()
-            company = parts[1].strip() if len(parts) > 1 else "the company"
-            context = parts[2].strip() if len(parts) > 2 else "my application"
-            days = int(''.join(filter(str.isdigit, parts[3]))) if len(parts) > 3 else 7
+        elif any(kw in t for kw in ["follow up email", "follow-up email"]):
+            params = self.extract_intent(task, {
+                "name": "string, the person's name",
+                "company": "string, the company name",
+                "context": "string, what the original email was about",
+                "days_ago": "integer or null, how many days since the original email"
+            })
+            name = params.get("name") or "Recruiter"
+            company = params.get("company") or "the company"
+            context = params.get("context") or "my application"
+            days = params.get("days_ago") or 7
+            try:
+                days = int(days)
+            except (TypeError, ValueError):
+                days = 7
             return self.draft_follow_up(name, company, context, days)
 
-        elif "publisher email" in t or "journal email" in t:
-            parts = task.replace("draft publisher email for", "").replace("journal email for", "").strip().split(",")
-            paper = parts[0].strip()
-            journal = parts[1].strip() if len(parts) > 1 else "the journal"
-            email = parts[2].strip() if len(parts) > 2 else ""
+        elif any(kw in t for kw in ["publisher email", "journal email"]):
+            params = self.extract_intent(task, {
+                "paper": "string, the paper title",
+                "journal": "string, the journal name",
+                "email": "string or null, editor email address"
+            })
+            paper = params.get("paper") or "my paper"
+            journal = params.get("journal") or "the journal"
+            email = params.get("email") or ""
             return self.draft_publisher_email(paper, journal, email)
 
         elif "send email" in t:
-            parts = task.replace("send email", "").strip().split(",")
-            email_id = int(''.join(filter(str.isdigit, parts[0])))
-            to_email = parts[1].strip() if len(parts) > 1 else ""
-            return self.send_email(email_id, to_email)
+            params = self.extract_intent(task, {
+                "email_id": "integer, the email ID number",
+                "to_email": "string, the recipient email address"
+            })
+            email_id = params.get("email_id")
+            to_email = params.get("to_email") or ""
+            if not email_id:
+                digits = ''.join(filter(str.isdigit, task))
+                email_id = int(digits) if digits else None
+            if email_id:
+                return self.send_email(int(email_id), to_email)
+            return "Please specify an email ID. Example: 'send email 3 to recruiter@company.com'"
 
-        elif "email dashboard" in t or "my emails" in t or "show emails" in t:
+        elif any(kw in t for kw in ["email dashboard", "my emails", "show emails"]):
             return self.email_dashboard()
 
         else:

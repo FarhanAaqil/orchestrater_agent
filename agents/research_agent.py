@@ -305,8 +305,25 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
     *Format: {format.upper()}*
     """
     
-        # Critic silently reviews abstract and intro
-        # (no need to show this process)
+        # Section coherence pass — ensure narrative flows consistently
+        coherence_prompt = f"""Review these two sections of an academic paper and ensure they are narratively consistent:
+
+Abstract preview: {sections['abstract'][:300]}
+Conclusion preview: {sections['conclusion'][:300]}
+
+Are the key contributions mentioned in the abstract reflected in the conclusion?
+If not, write a corrected conclusion opening (2-3 sentences only) that aligns them.
+If they are consistent, reply with: CONSISTENT"""
+        coherence_result = self.run_fresh(coherence_prompt, temperature=0.2)
+        if "CONSISTENT" not in coherence_result.upper() and len(coherence_result) > 20:
+            # Prepend coherence fix to conclusion
+            sections["conclusion"] = coherence_result + "\n\n" + sections["conclusion"]
+            # Rebuild full paper with updated conclusion
+            full_paper = full_paper.replace(
+                sections["conclusion"].split("\n\n", 1)[-1],
+                sections["conclusion"]
+            )
+
         paper_id = add_paper(
             f"{project} — Research Paper",
             sections["abstract"][:500],
@@ -479,6 +496,48 @@ Cover letter should include:
 Academic format. 300-400 words."""
         return self.run(task)
 
+    # ─── Paper Improvement ────────────────────────────────────────────
+
+    def improve_paper(self, paper_id: int, feedback: str = "") -> str:
+        """
+        Improve a paper stored in the database based on feedback.
+        Retrieves the paper, applies targeted improvements, and saves the new version.
+        """
+        papers = get_papers()
+        paper = next((p for p in papers if p["id"] == paper_id), None)
+        if not paper:
+            return f"❌ Paper ID {paper_id} not found. Use 'show papers' to see available IDs."
+
+        content = paper.get("content", "")[:4000]  # Stay within context limits
+        title = paper.get("title", "this paper")
+
+        if not feedback:
+            feedback = "Improve clarity, technical depth, and academic rigor throughout"
+
+        task = f"""You are improving this research paper based on reviewer feedback.
+
+Paper Title: {title}
+Feedback to address: {feedback}
+
+Paper excerpt (first 4000 chars):
+{content}
+
+Provide:
+1. A rewritten Abstract that better captures the contribution
+2. 3-5 specific improvements to the Introduction based on the feedback
+3. Suggestions for strengthening the Methodology section
+4. A revised Conclusion that better emphasizes novelty
+
+Focus on the specific feedback. Be concrete and academic."""
+
+        improved = self.run(task)
+
+        # Update status to reflect it's been revised
+        update_paper_status(paper_id, "revision", paper.get("target_journal", ""),
+                            f"Improved based on: {feedback[:100]}")
+
+        return f"📄 **Paper {paper_id} Improvement Plan:**\n\n{improved}\n\n✅ Status updated to 'revision'."
+
     # ─── Dashboard ────────────────────────────────────────────────────
 
     def research_dashboard(self) -> str:
@@ -525,31 +584,48 @@ Academic format. 300-400 words."""
     def handle(self, task: str) -> str:
         t = task.lower()
 
-        if "write paper" in t or "generate paper" in t or "create paper" in t:
-            parts = task.replace("write paper for", "").replace("generate paper for", "").replace("create paper for", "").strip().split(",")
-            project = parts[0].strip()
-            description = parts[1].strip() if len(parts) > 1 else ""
-            results = parts[2].strip() if len(parts) > 2 else ""
-            methodology = parts[3].strip() if len(parts) > 3 else ""
-            fmt = "ieee"
+        if any(kw in t for kw in ["write paper", "generate paper", "create paper", "research paper on"]):
+            # Use LLM intent extraction for natural language
+            params = self.extract_intent(task, {
+                "project": "string, the research topic or project name",
+                "description": "string or null, description of the research",
+                "results": "string or null, any results or findings mentioned",
+                "methodology": "string or null, any methodology details",
+                "format": "string, 'ieee', 'acm', or 'springer' — default ieee"
+            })
+            project = params.get("project") or task.replace("write paper", "").replace("for", "").strip()[:80]
+            description = params.get("description") or ""
+            results = params.get("results") or ""
+            methodology = params.get("methodology") or ""
+            fmt = params.get("format") or "ieee"
             if "acm" in t: fmt = "acm"
             elif "springer" in t: fmt = "springer"
             result = self.write_paper(project, description, results, methodology, fmt)
-            return f"✅ Paper written and saved (ID: {result['paper_id']})\n\n**Title:** {result['title']}\n\n---\n\n{result['content'][:1500]}...\n\n*(Full paper saved to database)*"
+            return f"✅ Paper written and saved (ID: {result['paper_id']})\n\n**Title:** {result['title']}\n\n---\n\n{result['content'][:1500]}...\n\n*(Full paper saved to database — {result['citations']} live citations)*"
 
         elif "improve paper" in t:
-            parts = task.replace("improve paper", "").strip().split(",")
-            paper_id = int(''.join(filter(str.isdigit, parts[0])))
-            feedback = parts[1].strip() if len(parts) > 1 else "Improve clarity and technical depth"
-            return self.improve_paper(paper_id, feedback)
+            params = self.extract_intent(task, {
+                "paper_id": "integer, the paper ID number",
+                "feedback": "string, the improvement instructions"
+            })
+            paper_id_raw = params.get("paper_id")
+            if not paper_id_raw:
+                digits = ''.join(filter(str.isdigit, task))
+                paper_id_raw = int(digits) if digits else None
+            feedback = params.get("feedback") or "Improve clarity and technical depth"
+            if paper_id_raw:
+                return self.improve_paper(int(paper_id_raw), feedback)
+            return "Please specify a paper ID. Example: 'improve paper 3, add more ablation study details'"
 
-        elif "find journals" in t or "search journals" in t:
-            topic = task.replace("find journals for", "").replace("search journals for", "").strip()
-            parts = topic.split(",")
-            topic_clean = parts[0].strip()
-            paper_id = int(''.join(filter(str.isdigit, parts[1]))) if len(parts) > 1 and any(c.isdigit() for c in parts[1]) else None
+        elif any(kw in t for kw in ["find journals", "search journals"]):
+            params = self.extract_intent(task, {
+                "topic": "string, the research topic",
+                "paper_id": "integer or null, paper ID if mentioned"
+            })
+            topic_clean = params.get("topic") or task.replace("find journals", "").replace("for", "").strip()
+            paper_id = params.get("paper_id")
             journals = self.find_journals(topic_clean, paper_id)
-            if not journals or "error" in journals[0]:
+            if not journals or (journals and "error" in journals[0]):
                 return f"DOAJ search error. Try: 'recommend journals for {topic_clean}'"
             result = f"📚 **Journals found for '{topic_clean}':**\n\n"
             for i, j in enumerate(journals, 1):
@@ -562,43 +638,61 @@ Academic format. 300-400 words."""
             return result
 
         elif "recommend journals" in t:
-            topic = task.replace("recommend journals for", "").strip()
-            parts = topic.split(",")
-            topic_clean = parts[0].strip()
-            paper_id = int(''.join(filter(str.isdigit, parts[1]))) if len(parts) > 1 and any(c.isdigit() for c in parts[1]) else None
+            params = self.extract_intent(task, {
+                "topic": "string, the research topic",
+                "paper_id": "integer or null"
+            })
+            topic_clean = params.get("topic") or task.replace("recommend journals", "").replace("for", "").strip()
+            paper_id = params.get("paper_id")
             return self.recommend_journals(topic_clean, paper_id)
 
-        elif "check journal" in t or "is predatory" in t or "check predatory" in t:
+        elif any(kw in t for kw in ["check journal", "is predatory", "check predatory"]):
             journal = task.replace("check journal", "").replace("is predatory", "").replace("check predatory", "").strip()
             return self.check_predatory(journal)
 
         elif "submission email" in t:
-            parts = task.replace("draft submission email for", "").replace("submission email for", "").strip().split(",")
-            paper_title = parts[0].strip()
-            journal = parts[1].strip() if len(parts) > 1 else "the journal"
-            editor = parts[2].strip() if len(parts) > 2 else "Editor-in-Chief"
+            params = self.extract_intent(task, {
+                "paper_title": "string, the paper title",
+                "journal": "string, the journal name",
+                "editor": "string or null, editor name if mentioned"
+            })
+            paper_title = params.get("paper_title") or "my paper"
+            journal = params.get("journal") or "the journal"
+            editor = params.get("editor") or "Editor-in-Chief"
             return self.draft_submission_email(paper_title, journal, editor)
 
         elif "cover letter" in t and "research" in t:
-            parts = task.replace("research cover letter for", "").replace("draft cover letter for", "").strip().split(",")
-            paper_title = parts[0].strip()
-            journal = parts[1].strip() if len(parts) > 1 else "the journal"
-            abstract = parts[2].strip() if len(parts) > 2 else ""
+            params = self.extract_intent(task, {
+                "paper_title": "string, the paper title",
+                "journal": "string, the journal name",
+                "abstract": "string or null, paper abstract if mentioned"
+            })
+            paper_title = params.get("paper_title") or "my paper"
+            journal = params.get("journal") or "the journal"
+            abstract = params.get("abstract") or ""
             return self.draft_cover_letter(paper_title, journal, abstract)
 
-        elif "update paper" in t or "mark paper" in t:
-            parts = task.replace("update paper", "").replace("mark paper", "").strip().split(",")
-            paper_id = int(''.join(filter(str.isdigit, parts[0])))
-            status = parts[1].strip() if len(parts) > 1 else "submitted"
-            journal = parts[2].strip() if len(parts) > 2 else ""
-            decision = parts[3].strip() if len(parts) > 3 else ""
-            update_paper_status(paper_id, status, journal, decision)
-            return f"✅ Paper {paper_id} updated to **{status}**"
+        elif any(kw in t for kw in ["update paper", "mark paper"]):
+            params = self.extract_intent(task, {
+                "paper_id": "integer, the paper ID",
+                "status": "string, new status: draft/review/submitted/accepted/rejected/revision",
+                "journal": "string or null",
+                "decision": "string or null"
+            })
+            paper_id_raw = params.get("paper_id")
+            if not paper_id_raw:
+                digits = ''.join(filter(str.isdigit, task))
+                paper_id_raw = int(digits) if digits else 1
+            status = params.get("status") or "submitted"
+            journal = params.get("journal") or ""
+            decision = params.get("decision") or ""
+            update_paper_status(int(paper_id_raw), status, journal, decision)
+            return f"✅ Paper {paper_id_raw} updated to **{status}**"
 
-        elif "research dashboard" in t or "papers dashboard" in t:
+        elif any(kw in t for kw in ["research dashboard", "papers dashboard"]):
             return self.research_dashboard()
 
-        elif "show papers" in t or "my papers" in t or "all papers" in t:
+        elif any(kw in t for kw in ["show papers", "my papers", "all papers"]):
             return self.show_papers()
 
         else:
