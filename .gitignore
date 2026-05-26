@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+venv/
+.env.local
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+
+# Database files
+*.sqlite3
+
+# Chroma DB storage
+chroma_db/
+
+# Logs and runtime files
+*.log
+*.pid
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# pytest
+.pytest_cache/
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# JetBrains
+*.iml
+*.iws
+
+# Node modules (if any frontend components are later added)
+node_modules/
