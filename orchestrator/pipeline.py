@@ -1,204 +1,170 @@
-from memory.chroma_store import store_memory
-from database.tracker import add_email, add_content
-import json
 from datetime import datetime
+from scheduler.background import add_notification
 
 class Pipeline:
-    def __init__(self, agent_map: dict, critic):
-        self.agents = agent_map
-        self.critic = critic
-        self.pending_approvals = []
+    def __init__(self, agent_map, critic_agent):
+        self.agent_map = agent_map
+        self.critic_agent = critic_agent
+        self.approvals = []
+        self._next_id = 1
 
-    def _log(self, pipeline_name: str, step: str, result: str):
-        store_memory(
-            "pipelines",
-            f"{pipeline_name}_{hash(step)}_{datetime.now().isoformat()}",
-            result,
-            {"pipeline": pipeline_name, "step": step}
-        )
-
-    def queue_approval(self, item_type: str, title: str,
-                       content: str, action: str, metadata: dict = {}):
-        """Queue something for user approval before executing"""
-        self.pending_approvals.append({
-            "id": len(self.pending_approvals) + 1,
-            "type": item_type,
+    def _queue_approval(self, title, a_type, content, callback=None):
+        a_id = self._next_id
+        self._next_id += 1
+        self.approvals.append({
+            "id": a_id,
             "title": title,
+            "type": a_type,
             "content": content,
-            "action": action,
-            "metadata": metadata,
             "created_at": datetime.now().isoformat(),
-            "status": "pending"
+            "callback": callback
         })
+        return f"Queued for approval (ID: {a_id}): {title}"
 
-    def get_pending_approvals(self) -> list:
-        return [a for a in self.pending_approvals if a["status"] == "pending"]
+    def run_apply_pipeline(self, company: str, role: str, jd: str, email: str) -> str:
+        """
+        Multi-agent job application pipeline:
+        1. CareerAgent tailors resume to the JD
+        2. JobAgent generates a cover letter
+        3. CriticAgent reviews the cover letter
+        4. Queues everything for human approval
+        """
+        steps = []
 
-    def approve(self, approval_id: int) -> str:
-        for item in self.pending_approvals:
-            if item["id"] == approval_id:
-                item["status"] = "approved"
-                return self._execute_approved(item)
-        return "Approval not found."
+        # Pre-check: Skill Gap Analysis
+        job_match = self.critic_agent.critique_job_match(role, company, jd)
+        if job_match.get("score", 10) < 6:
+            add_notification(f"Pipeline paused for {company}: Skill match too low ({job_match.get('score')}/10). Consider learning first.", "warning")
+            return f"❌ Pipeline paused: Your skill match for {role} at {company} is too low ({job_match.get('score')}/10).\n\nReasons: {', '.join(job_match.get('reasons', []))}\n\nRecommendation: Focus on learning before applying."
 
-    def reject(self, approval_id: int) -> str:
-        for item in self.pending_approvals:
-            if item["id"] == approval_id:
-                item["status"] = "rejected"
-                return f"❌ Rejected: {item['title']}"
-        return "Approval not found."
+        add_notification(f"Starting apply pipeline for {company}", "system")
 
-    def _execute_approved(self, item: dict) -> str:
-        action = item["action"]
-        content = item["content"]
-        meta = item["metadata"]
-
-        if action == "send_email":
-            email_agent = self.agents.get("email")
-            if email_agent:
-                result = email_agent._send_email(
-                    meta.get("to_email", ""),
-                    meta.get("subject", ""),
-                    content
-                )
-                return f"✅ Email sent!" if result["success"] else f"❌ {result['error']}"
-
-        elif action == "publish_hashnode":
-            growth_agent = self.agents.get("growth")
-            if growth_agent:
-                result = growth_agent.publish_to_hashnode(
-                    meta.get("title", ""), content
-                )
-                return f"✅ Published! {result.get('url','')}" if result["success"] else f"❌ {result['error']}"
-
-        elif action == "publish_devto":
-            growth_agent = self.agents.get("growth")
-            if growth_agent:
-                result = growth_agent.publish_to_devto(
-                    meta.get("title", ""), content
-                )
-                return f"✅ Published! {result.get('url','')}" if result["success"] else f"❌ {result['error']}"
-
-        return f"✅ Action '{action}' executed."
-
-    # ─── Pipelines ────────────────────────────────────────────────
-
-    def run_apply_pipeline(self, company: str, role: str,
-                            jd: str = "", recruiter_email: str = "") -> str:
-        """Research → Resume → Cover Letter → Email → Queue for approval"""
-        results = []
-
-        # Step 1: Research company
-        web = self.agents.get("briefing")
-        from utils.web_search import search_web
-        company_info = search_web(f"{company} company AI ML culture tech stack", 3)
-        company_context = "\n".join([f"- {r['title']}: {r['snippet']}" for r in company_info])
-        self._log("apply", "research", company_context)
-        results.append(f"🔍 Researched {company}")
-
-        # Step 2: Skill gap analysis
-        career = self.agents.get("career")
+        # Step 1: Tailor resume
+        career = self.agent_map.get("career")
         if career and jd:
-            gap = career.skill_gap_analysis(jd)
-            self._log("apply", "skill_gap", gap)
-            results.append("🎯 Skill gap analyzed")
+            tailored_resume = career.tailor_resume(jd)
+            steps.append(f"## Tailored Resume\n{tailored_resume}")
+            add_notification(f"Step 1/2 complete: Tailored resume for {company}", "success")
+        else:
+            steps.append("## Tailored Resume\n*(No JD provided — using base resume)*")
 
-        # Step 3: Generate cover letter
-        job = self.agents.get("job")
+        # Step 2: Generate cover letter
+        job = self.agent_map.get("job")
         if job:
-            cover = job.generate_cover_letter(role, company,
-                f"{jd}\n\nCompany context:\n{company_context}")
-            # Critic silently improves it
-            cover = self.critic.improve("cover_letter", cover)
-            self._log("apply", "cover_letter", cover)
-            results.append("✍️ Cover letter written + critiqued")
-
-        # Step 4: Draft application email
-        email_agent = self.agents.get("email")
-        if email_agent:
-            email_body = email_agent.draft_application_email(company, role, jd)
-            email_body = self.critic.improve("email", email_body)
-            self._log("apply", "email", email_body)
-
-            # Queue for approval — don't send automatically
-            self.queue_approval(
-                "email",
-                f"Application Email → {company} ({role})",
-                email_body,
-                "send_email",
-                {"to_email": recruiter_email, "subject": f"Application for {role} — Farhan Aaqil"}
-            )
-            results.append("📧 Application email drafted → waiting for your approval")
-
-        return "\n".join(results) + \
-               f"\n\n✅ Pipeline complete. Check **Approvals** tab to review and send."
-
-    def run_publish_pipeline(self, project: str, details: str = "") -> str:
-        """Generate all content → queue everything for approval"""
-        results = []
-        growth = self.agents.get("growth")
-        if not growth:
-            return "Growth agent not available."
-
-        # Generate blog
-        blog = growth.generate_blog_post(project, details)
-        blog = self.critic.improve("linkedin_post", blog)
-        self.queue_approval(
-            "blog", f"Blog Post: {project}", blog,
-            "publish_hashnode", {"title": f"Building {project}"}
+            cover_letter = job.generate_cover_letter(role, company, jd)
+            # Step 3: Critic reviews the cover letter silently
+            cover_letter = self.critic_agent.improve("cover_letter", cover_letter)
+            steps.append(f"## Cover Letter\n{cover_letter}")
+            add_notification(f"Step 2/2 complete: Cover letter ready for {company}", "success")
+        
+        full_content = (
+            f"**Company:** {company}\n"
+            f"**Role:** {role}\n"
+            f"**Send To:** {email or 'N/A'}\n\n"
+            + "\n\n---\n\n".join(steps)
         )
-        results.append("📝 Blog post ready → pending approval")
-
-        # Generate LinkedIn post
-        post = growth.generate_linkedin_post(project, details)
-        post = self.critic.improve("linkedin_post", post)
-        self.queue_approval(
-            "linkedin_post", f"LinkedIn Post: {project}",
-            post, "linkedin_post", {}
+        return self._queue_approval(
+            f"Application: {company} — {role}",
+            "email",
+            full_content
         )
-        results.append("💼 LinkedIn post ready → pending approval")
 
-        # Generate Twitter thread
-        thread = growth.generate_twitter_thread(project)
-        self.queue_approval(
-            "twitter_thread", f"Twitter Thread: {project}",
-            thread, "twitter_thread", {}
+    def run_publish_pipeline(self, project: str, details: str) -> str:
+        """
+        Multi-agent content publishing pipeline:
+        1. GrowthAgent generates LinkedIn post + blog post
+        2. CriticAgent reviews the LinkedIn post
+        3. Queues for approval before any publishing
+        """
+        steps = []
+
+        growth = self.agent_map.get("growth")
+        if growth:
+            linkedin = growth.generate_linkedin_post(project, details)
+            # Critic reviews silently
+            linkedin = self.critic_agent.improve("linkedin_post", linkedin)
+            steps.append(f"## LinkedIn Post\n{linkedin}")
+
+            blog = growth.generate_blog_post(project, details)
+            steps.append(f"## Blog Post (Hashnode)\n{blog[:800]}...\n*(Full post saved to DB)*")
+
+        full_content = (
+            f"**Project:** {project}\n"
+            f"**Details:** {details}\n\n"
+            + "\n\n---\n\n".join(steps)
         )
-        results.append("🐦 Twitter thread ready → pending approval")
+        return self._queue_approval(
+            f"Publish: {project}",
+            "content",
+            full_content
+        )
 
-        return "\n".join(results) + \
-               "\n\n✅ All content drafted. Check **Approvals** tab to review each piece."
-
-    def run_research_pipeline(self, project: str,
-                               description: str, target_journal: str = "") -> str:
-        """Write paper → find journals → draft submission → queue for approval"""
-        results = []
-        research = self.agents.get("research")
-        if not research:
-            return "Research agent not available."
-
-        # Write paper
-        paper = research.write_paper(project, description)
-        results.append(f"📄 Paper written (ID: {paper['paper_id']})")
-
-        # Find journals
-        journals = research.recommend_journals(project, paper["paper_id"])
-        results.append("📚 Journals identified")
-
-        # Draft submission email
-        email_agent = self.agents.get("email")
-        if email_agent and target_journal:
-            sub_email = email_agent.draft_publisher_email(
-                paper["title"], target_journal
+    def run_research_pipeline(self, project: str, description: str, journal: str) -> str:
+        """
+        Multi-agent research pipeline:
+        1. ResearchAgent writes a full paper
+        2. ResearchAgent finds matching journals (DOAJ)
+        3. ResearchAgent recommends top venues (LLM)
+        4. Queues a summary for approval
+        """
+        research = self.agent_map.get("research")
+        if research:
+            add_notification(f"Starting research pipeline for: {project}", "system")
+            paper_result = research.write_paper(project, description)
+            paper_id = paper_result.get("paper_id")
+            paper_title = paper_result.get("title", project)
+            citations = paper_result.get("citations", 0)
+            paper_content = paper_result.get("content", "")
+            
+            add_notification("Step 1/2 complete: Draft generated. Critic reviewing...", "success")
+            
+            # Critic improvement
+            improved_content = self.critic_agent.improve("research_paper", paper_content[:2000]) # Pass excerpt
+            
+            # Find journals
+            journal_recs = research.recommend_journals(
+                project, paper_id=paper_id
             )
-            sub_email = self.critic.improve("email", sub_email)
-            self.queue_approval(
-                "submission_email",
-                f"Submission Email → {target_journal}",
-                sub_email, "send_email",
-                {"to_email": "", "subject": f"Manuscript Submission — {paper['title']}"}
-            )
-            results.append("📧 Submission email drafted → pending approval")
+            add_notification("Step 2/2 complete: Target journals found.", "success")
 
-        return "\n".join(results) + \
-               "\n\n✅ Research pipeline complete. Check **Approvals** tab."
+            full_content = (
+                f"**Paper:** {paper_title}\n"
+                f"**Target Journal:** {journal or 'TBD'}\n"
+                f"**Citations Used:** {citations}\n"
+                f"**DB Paper ID:** {paper_id}\n\n"
+                f"## Journal Recommendations\n{journal_recs[:1000]}...\n\n"
+                f"*(Full paper saved to database — ID: {paper_id})*"
+            )
+        else:
+            full_content = (
+                f"**Project:** {project}\n"
+                f"**Description:** {description}\n"
+                f"**Target Journal:** {journal}\n\n"
+                "Research agent unavailable."
+            )
+
+        return self._queue_approval(
+            f"Research: {project}",
+            "paper",
+            full_content
+        )
+
+    def get_pending_approvals(self):
+        return self.approvals
+
+    def approve(self, approval_id):
+        for i, a in enumerate(self.approvals):
+            if a["id"] == approval_id:
+                if a.get("callback"):
+                    a["callback"]()
+                self.approvals.pop(i)
+                return f"✅ Approved ID {approval_id}"
+        return f"❌ Approval ID {approval_id} not found."
+
+    def reject(self, approval_id):
+        for i, a in enumerate(self.approvals):
+            if a["id"] == approval_id:
+                self.approvals.pop(i)
+                return f"❌ Rejected ID {approval_id}"
+        return f"❌ Approval ID {approval_id} not found."
+

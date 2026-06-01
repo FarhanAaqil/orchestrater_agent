@@ -7,8 +7,6 @@ SpeechRecognition
 pyttsx3
 audio-recorder-streamlit
 pyaudio
-playwright
-playwright-stealth
 feedparser
 apscheduler
 duckduckgo-search

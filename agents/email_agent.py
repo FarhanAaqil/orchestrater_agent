@@ -1,3 +1,8 @@
+"""
+Email Agent — Drafts and sends professional emails via Gmail.
+Fully LLM-dispatched via think_and_act().
+"""
+
 from agents.base_agent import BaseAgent
 from database.tracker import add_email, mark_email_sent, get_emails
 import smtplib
@@ -17,51 +22,86 @@ LinkedIn: linkedin.com/in/farhan-aaqil-4730432bb
 Phone: +91-6300825009
 """
 
+
 class EmailAgent(BaseAgent):
+
+    TOOLS = [
+        {
+            "name": "draft_recruiter_email",
+            "description": "Draft a cold outreach email to a recruiter. Use for 'email recruiter', 'outreach email to [name]', 'cold email to [company]'.",
+            "args": {"name": "str", "company": "str", "role": "str", "email": "str (optional)"}
+        },
+        {
+            "name": "draft_application_email",
+            "description": "Draft a job application email. Use for 'application email for [role] at [company]', 'apply email'.",
+            "args": {"company": "str", "role": "str", "jd_summary": "str (optional)", "email": "str (optional)"}
+        },
+        {
+            "name": "draft_follow_up",
+            "description": "Draft a follow-up email. Use for 'follow up with [name]', 'follow up email to [company]'.",
+            "args": {"name": "str", "company": "str", "context": "str", "days_ago": "int (default 7)"}
+        },
+        {
+            "name": "draft_publisher_email",
+            "description": "Draft a research paper submission email to a journal. Use for 'submit paper', 'journal email', 'publisher email'.",
+            "args": {"paper_title": "str", "journal": "str", "editor_email": "str (optional)"}
+        },
+        {
+            "name": "email_dashboard",
+            "description": "Show all drafted emails and stats. Use for 'show emails', 'email dashboard', 'my emails'.",
+            "args": {}
+        },
+        {
+            "name": "send_email",
+            "description": "Send a drafted email by ID. Use for 'send email [ID]', 'send to [email]'.",
+            "args": {"email_id": "int", "to_email": "str"}
+        },
+        {
+            "name": "draft_general_email",
+            "description": "Draft a general, non-specific email. Use for 'send an email to [email] saying [context]', 'greetings email', etc.",
+            "args": {"context": "str", "to_name": "str (optional)", "to_email": "str (optional)"}
+        }
+    ]
+
     def __init__(self):
         super().__init__(
             name="email",
-            system_prompt=f"""You are Aaqil's Email Agent.
-You draft and send professional emails for:
-- Job/internship applications and follow-ups
-- Research paper submissions to journals
-- Recruiter outreach and networking
-- Publisher communications
-Always be professional, concise, and genuine.
+            system_prompt=f"""You are Aaqil's Email Agent — precision email writer.
+You draft and send professional emails for job applications, recruiter outreach,
+research paper submissions, and follow-ups.
+Always be professional, concise, and genuine. Never generic.
 Aaqil's signature: {AAQIL_SIGNATURE}"""
         )
-        self.email = os.getenv("EMAIL_ADDRESS")
+        self.from_email = os.getenv("EMAIL_ADDRESS")
         self.password = os.getenv("EMAIL_APP_PASSWORD")
 
     def _send_email(self, to_email: str, subject: str, body: str) -> dict:
-        if not self.email or not self.password:
-            return {"success": False, "error": "Gmail credentials missing in .env"}
+        if not self.from_email or not self.password:
+            return {"success": False, "error": "Gmail credentials missing in .env (EMAIL_ADDRESS + EMAIL_APP_PASSWORD)"}
         try:
             msg = MIMEMultipart()
-            msg["From"] = self.email
+            msg["From"] = self.from_email
             msg["To"] = to_email
             msg["Subject"] = subject
             msg.attach(MIMEText(body, "plain"))
             with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-                server.login(self.email, self.password)
+                server.login(self.from_email, self.password)
                 server.send_message(msg)
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     def draft_recruiter_email(self, name: str, company: str,
-                               role: str, email: str = "") -> str:
-        task = f"""Draft a cold outreach email to a recruiter:
+                               role: str = "AI/ML Intern", email: str = "") -> str:
+        task = f"""Draft a cold outreach email from Farhan Aaqil to a recruiter:
 Recruiter: {name} at {company}
-Role: {role}
-From: Farhan Aaqil
+Target Role: {role}
 
-Write a compelling, short email (150-200 words):
-- Subject line
-- Personal hook referencing {company}
-- 2 sentences on Aaqil's strongest relevant experience
-- Specific ask (30-min call or resume review)
-- Professional closing
+Write a compelling email (150-200 words):
+- Subject line first (on its own line, prefix with "Subject: ")
+- Personal hook: reference something specific about {company}'s AI/ML work
+- 2 sentences on Aaqil's strongest relevant experience (LLM agent system, published ML paper)
+- Specific, low-friction ask (30-min call? resume review?)
 {AAQIL_SIGNATURE}"""
         result = self.run(task)
         subject = f"AI/ML Internship Opportunity — Farhan Aaqil"
@@ -70,75 +110,91 @@ Write a compelling, short email (150-200 words):
                 subject = line.replace("Subject:", "").replace("subject:", "").strip()
                 break
         email_id = add_email(email, name, subject, result, "recruiter_outreach")
-        return f"📧 Email drafted (ID: {email_id})\n\n{result}"
+        return f"📧 **Recruiter Email Drafted** (ID: {email_id})\n\n{result}"
 
     def draft_application_email(self, company: str, role: str,
                                   jd_summary: str = "", email: str = "") -> str:
-        task = f"""Draft a job application email:
+        task = f"""Draft a job application email from Farhan Aaqil:
 Company: {company}
 Role: {role}
 JD: {jd_summary if jd_summary else 'AI/ML internship'}
-From: Farhan Aaqil
 
 Include:
-- Strong subject line
+- Strong subject line (prefix with "Subject: ")
 - Opening that references {company} specifically
 - 3 bullet points: most relevant project/skill for this role
 - Link to GitHub and LinkedIn
-- Professional close
 {AAQIL_SIGNATURE}"""
         result = self.run(task)
         subject = f"Application for {role} — Farhan Aaqil"
+        for line in result.split('\n'):
+            if line.lower().startswith("subject:"):
+                subject = line.replace("Subject:", "").replace("subject:", "").strip()
+                break
         email_id = add_email(email, company, subject, result, "job_application")
-        return f"📧 Application email drafted (ID: {email_id})\n\n{result}"
+        return f"📧 **Application Email Drafted** (ID: {email_id})\n\n{result}"
 
-    def draft_follow_up(self, name: str, company: str,
-                         context: str, days_ago: int = 7) -> str:
-        task = f"""Draft a follow-up email:
+    def draft_follow_up(self, name: str, company: str = "the company",
+                         context: str = "my application", days_ago: int = 7) -> str:
+        task = f"""Draft a follow-up email from Farhan Aaqil:
 To: {name} at {company}
 Context: {context}
-Sent {days_ago} days ago, no reply yet.
+Sent {days_ago} days ago, no reply.
 
 Write a short, polite follow-up (80-100 words):
-- Reference the original email context
-- Show continued genuine interest
-- One new value-add (new project, achievement)
+- Reference the original context
+- Add ONE new value-add (recent project milestone)
 - Clear ask
 {AAQIL_SIGNATURE}"""
         result = self.run(task)
         subject = f"Following up — {context[:40]}"
         email_id = add_email("", name, subject, result, "follow_up")
-        return f"📧 Follow-up drafted (ID: {email_id})\n\n{result}"
+        return f"📧 **Follow-up Drafted** (ID: {email_id})\n\n{result}"
 
     def draft_publisher_email(self, paper_title: str, journal: str,
                                editor_email: str = "") -> str:
-        task = f"""Draft a manuscript submission email:
+        task = f"""Draft a manuscript submission email from Farhan Aaqil:
 Paper: {paper_title}
 Journal: {journal}
-From: Farhan Aaqil, JPNCE Mahbubnagar, India
-Previous pub: ML-based Diabetes Prediction (2025)
 
-Formal academic submission email:
-- Subject: Manuscript Submission — [Paper Title]
+Academic submission email:
+- Subject: Manuscript Submission — {paper_title}
 - State paper title and contribution
-- Why it fits this journal
+- Why it fits {journal}
 - Originality declaration
-- Contact details
 {AAQIL_SIGNATURE}"""
         result = self.run(task)
         subject = f"Manuscript Submission — {paper_title}"
         email_id = add_email(editor_email, f"Editor, {journal}", subject, result, "paper_submission")
-        return f"📧 Submission email drafted (ID: {email_id})\n\n{result}"
+        return f"📧 **Submission Email Drafted** (ID: {email_id})\n\n{result}"
+
+    def draft_general_email(self, context: str, to_name: str = "", to_email: str = "") -> str:
+        task = f"""Draft a general email from Farhan Aaqil:
+To: {to_name if to_name else 'the recipient'} ({to_email})
+Context: {context}
+
+Write a polite and appropriate email:
+- Subject line first (on its own line, prefix with "Subject: ")
+- Body of the email based on the context
+{AAQIL_SIGNATURE}"""
+        result = self.run(task)
+        subject = f"Message from Farhan Aaqil"
+        for line in result.split('\n'):
+            if line.lower().startswith("subject:"):
+                subject = line.replace("Subject:", "").replace("subject:", "").strip()
+                break
+        email_id = add_email(to_email, to_name, subject, result, "general")
+        return f"📧 **General Email Drafted** (ID: {email_id})\n\n{result}\n\n*To send this, type: 'send email {email_id} to {to_email}'*"
 
     def send_email(self, email_id: int, to_email: str) -> str:
         emails = get_emails()
         email = next((e for e in emails if e["id"] == email_id), None)
         if not email:
-            return "Email not found."
+            return f"❌ Email ID {email_id} not found. Use 'show emails' to see IDs."
         result = self._send_email(to_email, email["subject"], email["body"])
         if result["success"]:
             mark_email_sent(email_id)
-            return f"✅ Email sent successfully to {to_email}"
+            return f"✅ Email sent to {to_email}"
         return f"❌ Failed to send: {result['error']}"
 
     def email_dashboard(self) -> str:
@@ -148,64 +204,18 @@ Formal academic submission email:
             by_cat.setdefault(e["category"], []).append(e)
         result = f"📬 **Email Dashboard ({len(emails)} total):**\n\n"
         cat_emoji = {
-            "recruiter_outreach": "🤝",
-            "job_application": "💼",
-            "follow_up": "🔄",
-            "paper_submission": "📚",
-            "general": "📧"
+            "recruiter_outreach": "🤝", "job_application": "💼",
+            "follow_up": "🔄", "paper_submission": "📚", "general": "📧"
         }
         for cat, cat_emails in by_cat.items():
             sent = len([e for e in cat_emails if e["status"] == "sent"])
             emoji = cat_emoji.get(cat, "📧")
-            result += f"{emoji} {cat.replace('_', ' ').title()}: {len(cat_emails)} total | {sent} sent\n"
+            result += f"{emoji} {cat.replace('_', ' ').title()}: {len(cat_emails)} | {sent} sent\n"
         result += "\n**Recent Emails:**\n"
         for e in emails[:5]:
-            result += f"\n• [{e['status'].upper()}] {e['subject'][:50]}\n"
+            result += f"\n• [{e['id']}] [{e['status'].upper()}] {e['subject'][:50]}\n"
             result += f"  To: {e['to_name']} | {e['created_at'][:10]}\n"
         return result
 
     def handle(self, task: str) -> str:
-        t = task.lower()
-
-        if "recruiter email" in t or "outreach email" in t:
-            parts = task.replace("draft recruiter email to", "").replace("outreach email to", "").strip().split(",")
-            name = parts[0].strip()
-            company = parts[1].strip() if len(parts) > 1 else "the company"
-            role = parts[2].strip() if len(parts) > 2 else "AI/ML Intern"
-            email = parts[3].strip() if len(parts) > 3 else ""
-            return self.draft_recruiter_email(name, company, role, email)
-
-        elif "application email" in t:
-            parts = task.replace("draft application email for", "").replace("application email for", "").strip().split(",")
-            company = parts[0].strip()
-            role = parts[1].strip() if len(parts) > 1 else "AI/ML Intern"
-            jd = parts[2].strip() if len(parts) > 2 else ""
-            email = parts[3].strip() if len(parts) > 3 else ""
-            return self.draft_application_email(company, role, jd, email)
-
-        elif "follow up email" in t or "follow-up email" in t:
-            parts = task.replace("draft follow up email to", "").replace("follow-up email to", "").strip().split(",")
-            name = parts[0].strip()
-            company = parts[1].strip() if len(parts) > 1 else "the company"
-            context = parts[2].strip() if len(parts) > 2 else "my application"
-            days = int(''.join(filter(str.isdigit, parts[3]))) if len(parts) > 3 else 7
-            return self.draft_follow_up(name, company, context, days)
-
-        elif "publisher email" in t or "journal email" in t:
-            parts = task.replace("draft publisher email for", "").replace("journal email for", "").strip().split(",")
-            paper = parts[0].strip()
-            journal = parts[1].strip() if len(parts) > 1 else "the journal"
-            email = parts[2].strip() if len(parts) > 2 else ""
-            return self.draft_publisher_email(paper, journal, email)
-
-        elif "send email" in t:
-            parts = task.replace("send email", "").strip().split(",")
-            email_id = int(''.join(filter(str.isdigit, parts[0])))
-            to_email = parts[1].strip() if len(parts) > 1 else ""
-            return self.send_email(email_id, to_email)
-
-        elif "email dashboard" in t or "my emails" in t or "show emails" in t:
-            return self.email_dashboard()
-
-        else:
-            return self.run(task)
+        return self.think_and_act(task)

@@ -1,10 +1,12 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-MODEL = "llama-3.3-70b-versatile"
+FAST_MODEL = "llama-3.1-8b-instant"
+SMART_MODEL = "llama-3.3-70b-versatile"
+MODEL = FAST_MODEL
 CHROMA_PATH = "./chroma_db"
 
 AGENTS = {

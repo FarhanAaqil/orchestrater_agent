@@ -15,6 +15,60 @@ GitHub: github.com/FarhanAaqil
 """
 
 class GrowthAgent(BaseAgent):
+
+    TOOLS = [
+        {
+            "name": "generate_linkedin_post",
+            "description": "Generate a LinkedIn post about a project. Use for 'linkedin post for [project]', 'write linkedin post'.",
+            "args": {"project": "str", "achievement": "str (optional)"}
+        },
+        {
+            "name": "generate_twitter_thread",
+            "description": "Generate a Twitter/X thread about a project. Use for 'twitter thread for [project]', 'x thread'.",
+            "args": {"project": "str", "key_points": "str (optional)"}
+        },
+        {
+            "name": "generate_blog_post",
+            "description": "Generate a full blog post for Hashnode/Dev.to. Use for 'blog post for [project]', 'write article about'.",
+            "args": {"project": "str", "details": "str (optional)"}
+        },
+        {
+            "name": "generate_devlog",
+            "description": "Generate a devlog/build log entry. Use for 'devlog day [N]', 'write devlog', 'build log'.",
+            "args": {"day": "int", "built": "str", "challenges": "str (optional)"}
+        },
+        {
+            "name": "content_calendar",
+            "description": "Generate a content calendar for N weeks. Use for 'content calendar', 'plan content'.",
+            "args": {"weeks": "int (default 2)"}
+        },
+        {
+            "name": "generate_seo_tags",
+            "description": "Generate SEO tags for a blog post. Use for 'seo for [title]', 'seo tags'.",
+            "args": {"title": "str", "content": "str (optional)"}
+        },
+        {
+            "name": "content_dashboard",
+            "description": "Show all content posts and stats. Use for 'content dashboard', 'my content', 'show content'.",
+            "args": {}
+        },
+        {
+            "name": "publish_to_hashnode_cmd",
+            "description": "Publish a blog post to Hashnode. Use for 'publish to hashnode', 'publish blog'.",
+            "args": {"title": "str (optional)", "content": "str (optional)"}
+        },
+        {
+            "name": "ab_test_linkedin_post",
+            "description": "Generate A/B test variants for a LinkedIn post. Use for 'A/B test linkedin post for [project]'.",
+            "args": {"project": "str", "details": "str (optional)"}
+        },
+        {
+            "name": "track_engagement",
+            "description": "Track the engagement a post received to optimize future posts. Use for 'post got X likes', 'track engagement'.",
+            "args": {"style": "str (e.g., 'story', 'technical')", "likes": "int", "comments": "int"}
+        }
+    ]
+
     def __init__(self):
         super().__init__(
             name="growth",
@@ -31,9 +85,14 @@ Avoid cringe hustle culture. Be real, share learnings, show the code."""
     # ─── Content Generators ───────────────────────────────────────────
 
     def generate_linkedin_post(self, project: str, achievement: str = "") -> str:
+        engagements = "\n".join(self.recall("content engagement best style"))
+        
         task = f"""Write a LinkedIn post for Aaqil about:
 Project/Topic: {project}
 Achievement: {achievement if achievement else 'Building and learning'}
+
+Past Engagement Learnings (double down on what works):
+{engagements if engagements else 'None yet.'}
 
 Format:
 - Hook first line (no "Excited to share")
@@ -133,6 +192,22 @@ For each post include:
 
 Make it realistic. Mix technical depth with personal journey."""
         return self.run(task)
+
+    def ab_test_linkedin_post(self, project: str, details: str = "") -> str:
+        task = f"""Write 2 distinct LinkedIn post variants for Aaqil about:
+Project: {project}
+Details: {details}
+
+Variant A (Story-driven): Focus on the struggle, the 'why', and the personal journey.
+Variant B (Technical-driven): Focus on the architecture, the 'how', code snippets, and metrics.
+
+Both should follow best practices (hooks, short paragraphs, hashtags)."""
+        return self.run(task)
+
+    def track_engagement(self, style: str, likes: int, comments: int) -> str:
+        score = likes + (comments * 2)
+        self.remember(f"engagement_{hash(style+str(score))}", f"Style: {style} scored {score} engagement points", {"type": "content_engagement"})
+        return f"✅ Tracked {score} engagement points for '{style}' style. I'll use this to optimize future posts."
 
     # ─── Publishers ───────────────────────────────────────────────────
 
@@ -239,77 +314,18 @@ mutation PublishPost($input: PublishPostInput!) {
 
         return result
 
+    def publish_to_hashnode_cmd(self, title: str = "", content: str = "") -> str:
+        if not title or not content:
+            drafts = get_content(platform="hashnode", status="draft")
+            if drafts:
+                content = content or drafts[0]["content"]
+                title = title or drafts[0]["title"].replace("Blog: ", "")
+        if not title:
+            return "❌ No content to publish. Generate a blog post first."
+        result = self.publish_to_hashnode(title, content)
+        if result["success"]:
+            return f"✅ Published to Hashnode!\n🔗 {result['url']}"
+        return f"❌ Hashnode publish failed: {result['error']}"
+
     def handle(self, task: str) -> str:
-        t = task.lower()
-
-        if "linkedin post" in t:
-            parts = task.replace("generate linkedin post", "").replace("linkedin post for", "").strip().split(",")
-            project = parts[0].strip()
-            achievement = parts[1].strip() if len(parts) > 1 else ""
-            return self.generate_linkedin_post(project, achievement)
-
-        elif "twitter thread" in t or "x thread" in t:
-            parts = task.replace("generate twitter thread", "").replace("twitter thread for", "").strip().split(",")
-            project = parts[0].strip()
-            points = parts[1].strip() if len(parts) > 1 else ""
-            return self.generate_twitter_thread(project, points)
-
-        elif "blog post" in t or "hashnode" in t and "generate" in t:
-            parts = task.replace("generate blog post", "").replace("blog post for", "").strip().split(",")
-            project = parts[0].strip()
-            details = parts[1].strip() if len(parts) > 1 else ""
-            return self.generate_blog_post(project, details)
-
-        elif "devlog" in t:
-            parts = task.replace("generate devlog", "").replace("devlog", "").strip().split(",")
-            day = int(''.join(filter(str.isdigit, parts[0]))) if parts[0] else 1
-            built = parts[1].strip() if len(parts) > 1 else task
-            challenges = parts[2].strip() if len(parts) > 2 else ""
-            return self.generate_devlog(day, built, challenges)
-
-        elif "content calendar" in t or "calendar" in t:
-            weeks = 2
-            nums = [int(s) for s in task.split() if s.isdigit()]
-            if nums: weeks = nums[0]
-            return self.content_calendar(weeks)
-
-        elif "publish hashnode" in t:
-            parts = task.replace("publish hashnode", "").strip().split(",")
-            title = parts[0].strip()
-            content = parts[1].strip() if len(parts) > 1 else ""
-            if not content:
-                # Get latest draft
-                drafts = get_content(platform="hashnode", status="draft")
-                if drafts:
-                    content = drafts[0]["content"]
-                    title = drafts[0]["title"].replace("Blog: ", "")
-            result = self.publish_to_hashnode(title, content)
-            if result["success"]:
-                return f"✅ Published to Hashnode!\n🔗 {result['url']}"
-            return f"❌ Failed: {result['error']}"
-
-        elif "publish devto" in t or "publish dev.to" in t or "publish dev" in t:
-            parts = task.replace("publish devto", "").replace("publish dev", "").strip().split(",")
-            title = parts[0].strip()
-            content = parts[1].strip() if len(parts) > 1 else ""
-            if not content:
-                drafts = get_content(platform="hashnode", status="draft")
-                if drafts:
-                    content = drafts[0]["content"]
-                    title = drafts[0]["title"].replace("Blog: ", "")
-            result = self.publish_to_devto(title, content)
-            if result["success"]:
-                return f"✅ Published to Dev.to!\n🔗 {result['url']}"
-            return f"❌ Failed: {result['error']}"
-
-        elif "seo" in t:
-            parts = task.replace("generate seo", "").replace("seo for", "").strip().split(",")
-            title = parts[0].strip()
-            content = parts[1].strip() if len(parts) > 1 else ""
-            return self.generate_seo_tags(title, content)
-
-        elif "content dashboard" in t or "my content" in t or "show content" in t:
-            return self.content_dashboard()
-
-        else:
-            return self.run(task)
+        return self.think_and_act(task)

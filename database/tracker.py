@@ -192,6 +192,94 @@ def init_db():
         )
     """)
 
+    # Chat sessions table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            created_at TEXT
+        )
+    """)
+
+    # Chat history table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS chat_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER,
+            user_message TEXT,
+            agent_name TEXT,
+            response TEXT,
+            created_at TEXT,
+            FOREIGN KEY(session_id) REFERENCES chat_sessions(id)
+        )
+    """)
+    
+    # Try to add session_id if upgrading existing DB
+    try:
+        c.execute("ALTER TABLE chat_history ADD COLUMN session_id INTEGER")
+    except sqlite3.OperationalError:
+        pass # Column likely exists
+
+    conn.commit()
+    conn.close()
+
+
+# ─── Chat Sessions & History ──────────────────────────────────────────────────
+
+def create_chat_session(title: str) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO chat_sessions (title, created_at) VALUES (?, ?)", 
+              (title, datetime.now().isoformat()))
+    session_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return session_id
+
+def get_chat_sessions() -> list:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, title, created_at FROM chat_sessions ORDER BY created_at DESC")
+    rows = c.fetchall()
+    conn.close()
+    return [{"id": r[0], "title": r[1], "created_at": r[2]} for r in rows]
+
+def delete_chat_session(session_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM chat_history WHERE session_id = ?", (session_id,))
+    c.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+def save_chat_message(session_id: int, user_message: str, agent_name: str, response: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO chat_history (session_id, user_message, agent_name, response, created_at)
+        VALUES (?, ?, ?, ?, ?)
+    """, (session_id, user_message, agent_name, response, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def load_chat_history(session_id: int, limit: int = 50) -> list:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "SELECT user_message, agent_name, response FROM chat_history WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
+        (session_id, limit)
+    )
+    rows = c.fetchall()
+    conn.close()
+    # Return in chronological order (oldest first)
+    return [{"user": r[0], "agent": r[1], "response": r[2]} for r in reversed(rows)]
+
+def clear_chat_history():
+    # Only used for global clear if needed, otherwise delete_chat_session is used
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM chat_history")
+    c.execute("DELETE FROM chat_sessions")
     conn.commit()
     conn.close()
 

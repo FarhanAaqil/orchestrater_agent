@@ -17,7 +17,7 @@ EXPERIENCE:
 SKILLS:
 - Languages: Python, SQL
 - AI/ML: LangChain, LLM Agents, Machine Learning, Deep Learning, NLP
-- Tools: ChromaDB, FastAPI, Streamlit, Git, Playwright
+- Tools: ChromaDB, FastAPI, Streamlit, Git
 - Data: Pandas, NumPy, Scikit-learn, Matplotlib
 
 PROJECTS:
@@ -39,6 +39,59 @@ RESEARCH:
 """
 
 class CareerAgent(BaseAgent):
+
+    TOOLS = [
+        {
+            "name": "tailor_resume",
+            "description": "Tailor Aaqil's resume to a specific job description. Use for 'tailor resume for [JD]', 'customize resume'.",
+            "args": {"job_description": "str"}
+        },
+        {
+            "name": "skill_gap_analysis",
+            "description": "Analyze skill gap between Aaqil's profile and a job. Use for 'skill gap for [role]', 'analyze job fit'.",
+            "args": {"job_description": "str"}
+        },
+        {
+            "name": "generate_interview_prep",
+            "description": "Generate interview prep questions and answers for a company/role. Use for 'interview prep for [company]', 'prepare for interview'.",
+            "args": {"company": "str", "role": "str (default AI/ML Intern)", "jd": "str (optional)"}
+        },
+        {
+            "name": "track_interview_outcome",
+            "description": "Log the outcome of an interview and feedback received. Use for 'I got rejected from X', 'passed the interview at Y'.",
+            "args": {"company": "str", "outcome": "str (e.g., 'rejected', 'offer', 'passed round 1')", "feedback": "str (optional)"}
+        },
+        {
+            "name": "suggest_certificates",
+            "description": "Suggest certificates Aaqil should pursue. Use for 'what certs should I get', 'recommend certifications'.",
+            "args": {}
+        },
+        {
+            "name": "show_skills",
+            "description": "Show all tracked skills. Use for 'show skills', 'my skills', 'what skills do I have'.",
+            "args": {}
+        },
+        {
+            "name": "show_certs",
+            "description": "Show all certificates. Use for 'show certificates', 'my certs', 'certifications'.",
+            "args": {}
+        },
+        {
+            "name": "career_dashboard",
+            "description": "Show full career stats dashboard. Use for 'career dashboard', 'career stats', 'career summary'.",
+            "args": {}
+        },
+        {
+            "name": "add_skill_command",
+            "description": "Add a skill to the tracker. Use for 'add skill [name]', 'I learned [skill]'.",
+            "args": {"task": "str (the original task string)"}
+        },
+        {
+            "name": "roadmap",
+            "description": "Generate a career roadmap for a target role. Use for 'roadmap for [role]', '90 day plan', 'learning roadmap'.",
+            "args": {"target_role": "str (e.g. 'ML Engineer', 'AI Researcher')"}
+        }
+    ]
     def __init__(self):
         super().__init__(
             name="career",
@@ -125,10 +178,15 @@ Output:
         return self.run(task)
 
     def generate_interview_prep(self, company: str, role: str, jd: str = "") -> str:
+        past_learnings = "\n".join(self.recall("interview outcome rejection feedback"))
+        
         task = f"""Generate interview prep for Aaqil:
 Company: {company}
 Role: {role}
 JD: {jd if jd else 'AI/ML internship'}
+
+Past interview learnings to keep in mind (avoid repeating mistakes):
+{past_learnings if past_learnings else 'None yet.'}
 
 Generate:
 1. 5 Technical questions (with ideal answers based on Aaqil's skills)
@@ -141,6 +199,11 @@ Be very specific to {company}'s culture and {role}."""
         result = self.run(task)
         add_interview_prep(company, role, result)
         return result
+
+    def track_interview_outcome(self, company: str, outcome: str, feedback: str = "") -> str:
+        memory_content = f"Interview at {company}: {outcome}. Feedback: {feedback}"
+        self.remember(f"interview_{company}_{hash(outcome)}", memory_content, {"type": "interview_outcome"})
+        return f"✅ Tracked interview outcome for {company}. I will keep this in mind for future prep."
 
     def suggest_certificates(self) -> str:
         skills = get_skills()
@@ -230,54 +293,20 @@ For each: Name, Provider, Link, Why it matters for Aaqil."""
             result += f"   Area: {c['skill_area']} | {c['completed_at'][:10] if c['completed_at'] else 'N/A'}\n\n"
         return result
 
+    def roadmap(self, target_role: str = "ML Engineer") -> str:
+        task = f"""Create a 90-day career roadmap for Farhan Aaqil targeting '{target_role}':
+
+Current skills: Python, LangChain, LLM Agents, ML, ChromaDB, FastAPI, Streamlit
+Published research: ML-based Diabetes Prediction
+Target: {target_role}
+
+Week-by-week plan:
+- Week 1-4: Foundation gaps to close
+- Week 5-8: Portfolio projects to build
+- Week 9-12: Application and networking targets
+
+Be specific with resources (courses, papers, projects). Not generic advice."""
+        return f"🗺️ **90-Day Roadmap for {target_role}:**\n\n{self.run(task)}"
+
     def handle(self, task: str) -> str:
-        t = task.lower()
-
-        if "tailor resume" in t or "customize resume" in t:
-            jd = task.replace("tailor resume for", "").replace("tailor resume", "").strip()
-            return self.tailor_resume(jd)
-
-        elif "skill gap" in t or "analyze job" in t:
-            jd = task.replace("skill gap for", "").replace("skill gap", "").strip()
-            return self.skill_gap_analysis(jd)
-
-        elif "interview prep" in t or "prepare interview" in t:
-            parts = task.replace("interview prep for", "").replace("prepare interview", "").strip().split(",")
-            company = parts[0].strip() if len(parts) > 0 else "the company"
-            role = parts[1].strip() if len(parts) > 1 else "AI/ML Intern"
-            jd = parts[2].strip() if len(parts) > 2 else ""
-            return self.generate_interview_prep(company, role, jd)
-
-        elif "suggest cert" in t or "recommend cert" in t or "what cert" in t:
-            return self.suggest_certificates()
-
-        elif "add skill" in t:
-            return self.add_skill_command(task)
-
-        elif "add milestone" in t:
-            parts = task.replace("add milestone", "").strip().split(",")
-            title = parts[0].strip()
-            category = parts[1].strip() if len(parts) > 1 else "general"
-            notes = parts[2].strip() if len(parts) > 2 else ""
-            add_milestone(title, category, notes)
-            return f"🏆 Milestone added: **{title}**"
-
-        elif "add certificate" in t or "add cert" in t:
-            parts = task.replace("add certificate", "").replace("add cert", "").strip().split(",")
-            title = parts[0].strip()
-            provider = parts[1].strip() if len(parts) > 1 else "Unknown"
-            area = parts[2].strip() if len(parts) > 2 else ""
-            add_certificate(title, provider, "completed", "", area)
-            return f"📜 Certificate added: **{title}** by {provider}"
-
-        elif "show skills" in t or "my skills" in t:
-            return self.show_skills()
-
-        elif "show cert" in t or "my cert" in t or "certificates" in t:
-            return self.show_certs()
-
-        elif "dashboard" in t or "career stats" in t or "career summary" in t:
-            return self.career_dashboard()
-
-        else:
-            return self.run(task)
+        return self.think_and_act(task)

@@ -31,6 +31,65 @@ TRUSTED_PUBLISHERS = [
 ]
 
 class ResearchAgent(BaseAgent):
+
+    TOOLS = [
+        {
+            "name": "write_paper",
+            "description": "Write a full academic research paper. Use for 'write paper', 'generate paper'.",
+            "args": {"project": "str", "description": "str", "results": "str (optional)", "methodology": "str (optional)", "format": "str (default 'ieee')"}
+        },
+        {
+            "name": "improve_paper",
+            "description": "Improve a generated paper based on feedback. Use for 'improve paper [ID]', 'fix paper'.",
+            "args": {"paper_id": "int", "feedback": "str"}
+        },
+        {
+            "name": "read_full_paper",
+            "description": "Read the full text of an ArXiv paper from its PDF URL. Use for 'read paper', 'summarize full paper'.",
+            "args": {"pdf_url": "str"}
+        },
+        {
+            "name": "find_journals",
+            "description": "Search DOAJ for free, reputable journals. Use for 'find journals', 'search journals'.",
+            "args": {"topic": "str", "paper_id": "int (optional)"}
+        },
+        {
+            "name": "recommend_journals",
+            "description": "Recommend reputable, indexed journals via LLM. Use for 'recommend journals'.",
+            "args": {"topic": "str", "paper_id": "int (optional)"}
+        },
+        {
+            "name": "check_predatory",
+            "description": "Check if a journal is predatory. Use for 'is [journal] predatory', 'check journal'.",
+            "args": {"journal_name": "str"}
+        },
+        {
+            "name": "draft_submission_email",
+            "description": "Draft a formal journal submission email. Use for 'submission email'.",
+            "args": {"paper_title": "str", "journal": "str", "editor": "str (optional)"}
+        },
+        {
+            "name": "draft_cover_letter",
+            "description": "Write a formal cover letter for journal submission. Use for 'research cover letter'.",
+            "args": {"paper_title": "str", "journal": "str", "abstract": "str (optional)"}
+        },
+        {
+            "name": "update_paper_status",
+            "description": "Update the status of a tracked paper. Use for 'update paper [ID] to [status]'.",
+            "args": {"paper_id": "int", "status": "str", "journal": "str (optional)", "decision": "str (optional)"}
+        },
+        {
+            "name": "research_dashboard",
+            "description": "Show the research papers dashboard with stats. Use for 'research dashboard', 'papers dashboard'.",
+            "args": {}
+        },
+        {
+            "name": "show_papers",
+            "description": "Show a list of all tracked papers. Use for 'show papers', 'my papers'.",
+            "args": {}
+        }
+    ]
+
     def __init__(self):
         super().__init__(
             name="research",
@@ -48,7 +107,7 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
                 methodology: str = "", format: str = "ieee",
                 target_pages: int = 30) -> dict:
 
-        from utils.web_search import search_arxiv, search_web
+        from utils.web_search import search_arxiv, search_web, fetch_arxiv_full_text
     
         # Step 1: Live literature search
         arxiv_papers = search_arxiv(f"{project} machine learning AI", max_results=15)
@@ -74,10 +133,22 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
             for c in citations
         ])
     
+        # Pull full text for the top most relevant paper to make related work deeply technical
+        top_paper_full_text = ""
+        if citations:
+            top_paper_url = citations[0]["url"]
+            print(f"Fetching full text for {top_paper_url}")
+            full_text = fetch_arxiv_full_text(top_paper_url)
+            if not full_text.startswith("Error"):
+                top_paper_full_text = full_text[:4000] # First 4000 chars of top paper for deep context
+
         related_work_context = "\n".join([
             f'Paper {c["id"]}: {c["title"]} — {c["abstract"][:200]}'
             for c in citations
         ])
+        
+        if top_paper_full_text:
+            related_work_context += f"\n\nDEEP CONTEXT (Paper 1 Full Text Excerpt):\n{top_paper_full_text}"
     
         # Step 2: Write each section separately for depth
         sections = {}
@@ -324,6 +395,22 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
             "sections": list(sections.keys())
         }
 
+    def read_full_paper(self, pdf_url: str) -> str:
+        from utils.web_search import fetch_arxiv_full_text
+        text = fetch_arxiv_full_text(pdf_url)
+        if text.startswith("Error"):
+            return f"❌ Failed to fetch paper: {text}"
+        
+        task = f"""Summarize this full research paper and extract key findings:
+{text[:8000]}...
+
+Provide:
+1. Core Methodology
+2. Key Results (with numbers if available)
+3. Main Contributions
+4. Limitations"""
+        return self.run(task)
+
     # ─── Journal Finder ───────────────────────────────────────────────
 
     def find_journals(self, topic: str, paper_id: int = None) -> list:
@@ -522,84 +609,24 @@ Academic format. 300-400 words."""
             result += f"  Status: {p['status']} | {p['created_at'][:10]}\n\n"
         return result
 
+    def update_paper_status(self, paper_id: int, status: str, journal: str = "", decision: str = "") -> str:
+        update_paper_status(paper_id, status, journal, decision)
+        return f"✅ Paper {paper_id} updated to **{status}**"
+
+    def improve_paper(self, paper_id: int, feedback: str) -> str:
+        papers = get_papers()
+        paper = next((p for p in papers if p["id"] == paper_id), None)
+        if not paper:
+            return f"❌ Paper ID {paper_id} not found."
+        
+        task = f"""Improve this research paper based on the following feedback:
+Feedback: {feedback}
+
+Original Paper excerpt (first 2000 chars):
+{paper['content'][:2000]}...
+
+Write a detailed revision plan and an improved introduction incorporating this feedback."""
+        return self.run(task)
+
     def handle(self, task: str) -> str:
-        t = task.lower()
-
-        if "write paper" in t or "generate paper" in t or "create paper" in t:
-            parts = task.replace("write paper for", "").replace("generate paper for", "").replace("create paper for", "").strip().split(",")
-            project = parts[0].strip()
-            description = parts[1].strip() if len(parts) > 1 else ""
-            results = parts[2].strip() if len(parts) > 2 else ""
-            methodology = parts[3].strip() if len(parts) > 3 else ""
-            fmt = "ieee"
-            if "acm" in t: fmt = "acm"
-            elif "springer" in t: fmt = "springer"
-            result = self.write_paper(project, description, results, methodology, fmt)
-            return f"✅ Paper written and saved (ID: {result['paper_id']})\n\n**Title:** {result['title']}\n\n---\n\n{result['content'][:1500]}...\n\n*(Full paper saved to database)*"
-
-        elif "improve paper" in t:
-            parts = task.replace("improve paper", "").strip().split(",")
-            paper_id = int(''.join(filter(str.isdigit, parts[0])))
-            feedback = parts[1].strip() if len(parts) > 1 else "Improve clarity and technical depth"
-            return self.improve_paper(paper_id, feedback)
-
-        elif "find journals" in t or "search journals" in t:
-            topic = task.replace("find journals for", "").replace("search journals for", "").strip()
-            parts = topic.split(",")
-            topic_clean = parts[0].strip()
-            paper_id = int(''.join(filter(str.isdigit, parts[1]))) if len(parts) > 1 and any(c.isdigit() for c in parts[1]) else None
-            journals = self.find_journals(topic_clean, paper_id)
-            if not journals or "error" in journals[0]:
-                return f"DOAJ search error. Try: 'recommend journals for {topic_clean}'"
-            result = f"📚 **Journals found for '{topic_clean}':**\n\n"
-            for i, j in enumerate(journals, 1):
-                result += f"{i}. **{j['name']}**\n"
-                result += f"   Publisher: {j['publisher']}\n"
-                result += f"   Subject: {j['subject']}\n"
-                result += f"   APC: {'Free' if j['apc'] == 0 else '$' + str(j['apc'])}\n"
-                if j["url"]: result += f"   🔗 {j['url']}\n"
-                result += "\n"
-            return result
-
-        elif "recommend journals" in t:
-            topic = task.replace("recommend journals for", "").strip()
-            parts = topic.split(",")
-            topic_clean = parts[0].strip()
-            paper_id = int(''.join(filter(str.isdigit, parts[1]))) if len(parts) > 1 and any(c.isdigit() for c in parts[1]) else None
-            return self.recommend_journals(topic_clean, paper_id)
-
-        elif "check journal" in t or "is predatory" in t or "check predatory" in t:
-            journal = task.replace("check journal", "").replace("is predatory", "").replace("check predatory", "").strip()
-            return self.check_predatory(journal)
-
-        elif "submission email" in t:
-            parts = task.replace("draft submission email for", "").replace("submission email for", "").strip().split(",")
-            paper_title = parts[0].strip()
-            journal = parts[1].strip() if len(parts) > 1 else "the journal"
-            editor = parts[2].strip() if len(parts) > 2 else "Editor-in-Chief"
-            return self.draft_submission_email(paper_title, journal, editor)
-
-        elif "cover letter" in t and "research" in t:
-            parts = task.replace("research cover letter for", "").replace("draft cover letter for", "").strip().split(",")
-            paper_title = parts[0].strip()
-            journal = parts[1].strip() if len(parts) > 1 else "the journal"
-            abstract = parts[2].strip() if len(parts) > 2 else ""
-            return self.draft_cover_letter(paper_title, journal, abstract)
-
-        elif "update paper" in t or "mark paper" in t:
-            parts = task.replace("update paper", "").replace("mark paper", "").strip().split(",")
-            paper_id = int(''.join(filter(str.isdigit, parts[0])))
-            status = parts[1].strip() if len(parts) > 1 else "submitted"
-            journal = parts[2].strip() if len(parts) > 2 else ""
-            decision = parts[3].strip() if len(parts) > 3 else ""
-            update_paper_status(paper_id, status, journal, decision)
-            return f"✅ Paper {paper_id} updated to **{status}**"
-
-        elif "research dashboard" in t or "papers dashboard" in t:
-            return self.research_dashboard()
-
-        elif "show papers" in t or "my papers" in t or "all papers" in t:
-            return self.show_papers()
-
-        else:
-            return self.run(task)
+        return self.think_and_act(task)

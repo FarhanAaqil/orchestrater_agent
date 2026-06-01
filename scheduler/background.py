@@ -51,19 +51,18 @@ def job_daily_job_search():
     try:
         job_agent = _agent_map.get("job")
         if job_agent:
-            jobs = job_agent.scrape_internshala("machine-learning", limit=10)
-            if jobs and "error" not in jobs[0]:
+            result = job_agent.search_all("machine learning intern remote", limit=10)
+            if "Found" in result or "Jobs Found" in result:
                 add_notification(
-                    f"🔍 Found {len(jobs)} new internships on Internshala", "jobs"
+                    "🔍 Daily job search complete — new matches found!", "jobs"
                 )
-            # Also search AI specifically
-            ai_jobs = job_agent.scrape_internshala("artificial-intelligence", limit=10)
-            if ai_jobs and "error" not in ai_jobs[0]:
-                add_notification(
-                    f"🔍 Found {len(ai_jobs)} AI internships", "jobs"
-                )
+            # Also search AI agents specifically
+            ai_result = job_agent.search_all("LLM AI agent python intern", limit=8)
+            if "Found" in ai_result or "Jobs Found" in ai_result:
+                add_notification("🔍 New AI/LLM agent internships found", "jobs")
     except Exception as e:
         add_notification(f"⚠️ Job search failed: {str(e)}", "error")
+
 
 def job_github_activity():
     try:
@@ -107,6 +106,32 @@ def job_high_priority_reminder():
     except Exception as e:
         pass
 
+def job_memory_consolidation():
+    """Consolidate and summarize old memories."""
+    try:
+        from memory.chroma_store import get_collection, store_memory
+        from config import MODEL, GROQ_API_KEY
+        from groq import Groq
+        
+        # Only consolidating agent short term summaries for now
+        for agent in _agent_map.keys():
+            col = get_collection(agent)
+            count = col.count()
+            if count > 20: # If getting cluttered
+                client = Groq(api_key=GROQ_API_KEY)
+                docs = col.get(limit=10, include=["documents"])
+                if docs and docs["documents"]:
+                    text = "\n".join(docs["documents"])
+                    resp = client.chat.completions.create(
+                        model=MODEL,
+                        messages=[{"role": "user", "content": f"Summarize these past learnings and interactions into 3-5 core principles/facts:\n{text}"}]
+                    )
+                    summary = resp.choices[0].message.content
+                    store_memory(agent, f"consolidation_{datetime.now().date()}", summary, {"type": "consolidated"})
+                    add_notification(f"🧹 Memory consolidated for {agent}", "system")
+    except Exception as e:
+        print(f"Memory consolidation failed: {e}")
+
 # ─── Start Scheduler ──────────────────────────────────────────────
 
 def start_scheduler(agent_map, pipeline):
@@ -140,6 +165,11 @@ def start_scheduler(agent_map, pipeline):
     scheduler.add_job(job_high_priority_reminder,
                       CronTrigger(hour="9,15", minute=0),
                       id="priority_reminder", replace_existing=True)
+
+    # Sunday 2 AM — Memory Consolidation
+    scheduler.add_job(job_memory_consolidation,
+                      CronTrigger(day_of_week="sun", hour=2, minute=0),
+                      id="memory_consolidation", replace_existing=True)
 
     scheduler.start()
     add_notification("✅ Aaqil background scheduler started", "system")
