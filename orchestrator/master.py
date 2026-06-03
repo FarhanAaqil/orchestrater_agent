@@ -12,7 +12,7 @@ from agents.email_agent import EmailAgent
 from agents.briefing_agent import BriefingAgent
 from agents.critic_agent import CriticAgent
 from agents.info_agent import InfoAgent
-from scheduler.background import start_scheduler
+from scheduler.background import start_scheduler, scheduler
 from orchestrator.health_monitor import health_monitor
 
 # Init all agents
@@ -48,7 +48,8 @@ BaseAgent.AGENT_MAP = AGENT_MAP
 pipeline = Pipeline(AGENT_MAP, critic_agent)
 
 # Start background scheduler
-start_scheduler(AGENT_MAP, pipeline)
+if not scheduler.running:
+    start_scheduler(AGENT_MAP, pipeline)
 
 # Short term conversational memory per agent (Rolling window)
 agent_short_term_memory = {agent: [] for agent in AGENT_MAP.keys()}

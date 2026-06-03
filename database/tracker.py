@@ -3,7 +3,8 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "tracker.db")
 from datetime import datetime
 import sqlite3
 
-DB_PATH = "./aaqil.db"
+import pathlib
+DB_PATH = str(pathlib.Path(__file__).parent.parent / "aaqil.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
