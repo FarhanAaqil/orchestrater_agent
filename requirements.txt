@@ -9,5 +9,6 @@ audio-recorder-streamlit
 pyaudio
 feedparser
 apscheduler
-duckduckgo-search
+ddgs
 arxiv
+

@@ -186,12 +186,30 @@ Rules:
             return self.run(task)
 
         try:
-            return method(**args)
-        except TypeError:
+            res = method(**args)
+            if not isinstance(res, str):
+                try:
+                    res = json.dumps(res, indent=2)
+                except Exception:
+                    res = str(res)
+            return res
+        except TypeError as e:
+            import traceback
+            print(f"Tool TypeError: {e}")
+            traceback.print_exc()
             # Arg mismatch — try calling with just the task
             try:
-                return method(task)
-            except Exception as e:
+                res = method(task)
+                if not isinstance(res, str):
+                    try:
+                        res = json.dumps(res, indent=2)
+                    except Exception:
+                        res = str(res)
+                return res
+            except Exception as inner_e:
+                print(f"Fallback to task string failed: {inner_e}")
                 return self.run(task)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return f"❌ [{self.name}] Tool `{tool_name}` failed: {e}"

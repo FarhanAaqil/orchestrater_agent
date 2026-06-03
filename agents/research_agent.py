@@ -103,7 +103,7 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
 
     # ─── Paper Writer ─────────────────────────────────────────────────
 
-    def write_paper(self, project: str, description: str, results: str = "",
+    def write_paper(self, project: str, description: str = "", results: str = "",
                 methodology: str = "", format: str = "ieee",
                 target_pages: int = 30) -> dict:
 
@@ -116,16 +116,18 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
         # Format citations
         citations = []
         for i, p in enumerate(arxiv_papers[:12], 1):
-            authors = ", ".join(p["authors"][:3])
-            if len(p["authors"]) > 3:
+            if "error" in p:
+                continue
+            authors = ", ".join(p.get("authors", [])[:3])
+            if len(p.get("authors", [])) > 3:
                 authors += " et al."
             citations.append({
                 "id": i,
                 "authors": authors,
-                "title": p["title"],
-                "year": p["published"][:4],
-                "url": p["url"],
-                "abstract": p["abstract"]
+                "title": p.get("title", "Untitled"),
+                "year": p.get("published", "2024")[:4],
+                "url": p.get("url", ""),
+                "abstract": p.get("abstract", "")
             })
     
         citation_text = "\n".join([
@@ -615,7 +617,7 @@ Academic format. 300-400 words."""
 
     def improve_paper(self, paper_id: int, feedback: str) -> str:
         papers = get_papers()
-        paper = next((p for p in papers if p["id"] == paper_id), None)
+        paper = next((p for p in papers if str(p["id"]) == str(paper_id)), None)
         if not paper:
             return f"❌ Paper ID {paper_id} not found."
         
