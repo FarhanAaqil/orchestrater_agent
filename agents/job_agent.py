@@ -16,9 +16,50 @@ import json
 import re
 import time
 import hashlib
+import pathlib
 from datetime import datetime, timedelta
 from agents.base_agent import BaseAgent
 from database.tracker import insert_job, update_status, get_all_jobs, get_stats
+
+# File-based job cache so results persist across restarts
+_CACHE_FILE = pathlib.Path("./job_cache.json")
+CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+def _load_cache() -> dict:
+    if _CACHE_FILE.exists():
+        try:
+            return json.loads(_CACHE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_cache(cache: dict):
+    try:
+        _CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _cache_get(key: str):
+    cache = _load_cache()
+    entry = cache.get(key)
+    if entry and (time.time() - entry["ts"]) < CACHE_TTL_SECONDS:
+        return entry["data"]
+    return None
+
+
+def _cache_set(key: str, data):
+    cache = _load_cache()
+    cache[key] = {"ts": time.time(), "data": data}
+    # Evict entries older than TTL to keep file small
+    now = time.time()
+    cache = {k: v for k, v in cache.items() if (now - v["ts"]) < CACHE_TTL_SECONDS}
+    _save_cache(cache)
+
+
+# ─── Profile & Keyword Config ─────────────────────────────────────
 
 AAQIL_PROFILE = """
 Name: Farhan Aaqil
@@ -45,20 +86,6 @@ EXCLUDE_KEYWORDS = [
     "devops only", "java only", "c++", ".net only"
 ]
 
-# Simple in-memory cache: {cache_key: (timestamp, data)}
-_job_cache: dict = {}
-CACHE_TTL_SECONDS = 3600  # 1 hour
-
-
-def _cache_get(key: str):
-    entry = _job_cache.get(key)
-    if entry and (time.time() - entry[0]) < CACHE_TTL_SECONDS:
-        return entry[1]
-    return None
-
-
-def _cache_set(key: str, data):
-    _job_cache[key] = (time.time(), data)
 
 
 class JobAgent(BaseAgent):
@@ -129,30 +156,41 @@ Always tell Aaqil WHY a job is a good or bad match for him."""
             if kw in text: score += 1
         return min(score, 10)
 
-    def _score_job_llm(self, title: str, description: str, company: str) -> int:
-        from config import MODEL
-        prompt = f"""Rate the match between this job and Aaqil's profile on a scale of 1-10.
-Job: {title} at {company}
-Description: {description[:500]}
+    def _score_job_llm_batch(self, jobs: list) -> list:
+        """Score a list of jobs in a SINGLE LLM call. Returns list of scores (same order)."""
+        if not jobs:
+            return []
+        from config import get_model
+        job_list = "\n".join([
+            f"{i+1}. {j['title']} at {j['company']}: {j.get('description', '')[:200]}"
+            for i, j in enumerate(jobs)
+        ])
+        prompt = f"""Rate each job's match with this profile on a scale of 1-10.
 
 Profile:
 {AAQIL_PROFILE}
 
-Return ONLY a number from 1 to 10."""
+Jobs:
+{job_list}
+
+Return ONLY a JSON array of integers in the same order, e.g. [7, 4, 9, ...]"""
         try:
             resp = self.client.chat.completions.create(
-                model=MODEL,
+                model=get_model("fast"),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0
             )
-            score_text = resp.choices[0].message.content.strip()
-            import re
-            match = re.search(r'\d+', score_text)
+            raw = resp.choices[0].message.content.strip()
+            # Extract the JSON array
+            match = re.search(r'\[.*?\]', raw, re.DOTALL)
             if match:
-                return min(int(match.group()), 10)
+                scores = json.loads(match.group())
+                if isinstance(scores, list) and len(scores) == len(jobs):
+                    return [min(max(int(s), 0), 10) for s in scores]
         except Exception:
             pass
-        return self._score_job(title, description) # fallback to keywords
+        # Fallback: keyword scoring
+        return [self._score_job(j["title"], j.get("description", "")) for j in jobs]
 
     def _is_relevant(self, title: str, description: str = "") -> bool:
         text = (title + " " + description).lower()
@@ -427,15 +465,17 @@ Return ONLY a number from 1 to 10."""
 
         all_jobs += remoteok_raw + remotive_raw + wwr_raw + ddg_raw
 
-        # Deduplicate + sort initial keyword filter
+        # Deduplicate + filter zero-score
         all_jobs = self._dedup(all_jobs)
         all_jobs = [j for j in all_jobs if j["match_score"] > 0]
-        
-        # Now score the top 20 candidates using the LLM actual resume match
+
+        # Score the top 20 candidates using a SINGLE batched LLM call
         top_candidates = sorted(all_jobs, key=lambda x: x["match_score"], reverse=True)[:20]
-        for job in top_candidates:
-            job["match_score"] = self._score_job_llm(job["title"], job["description"], job["company"])
-            
+        if top_candidates:
+            batch_scores = self._score_job_llm_batch(top_candidates)
+            for job, score in zip(top_candidates, batch_scores):
+                job["match_score"] = score
+
         # Re-sort based on LLM scores
         all_jobs = sorted(top_candidates, key=lambda x: x["match_score"], reverse=True)
 
@@ -477,7 +517,6 @@ Return ONLY a number from 1 to 10."""
     # ─── Cover Letter ─────────────────────────────────────────────────
 
     def generate_cover_letter(self, title: str, company: str, description: str = "") -> str:
-        from agents.critic_agent import CriticAgent
         task = f"""Write a highly tailored cover letter for Aaqil for this role:
 
 Role: {title}
@@ -496,10 +535,11 @@ Tone: confident, genuine, technical. NOT generic. NOT "I am writing to express i
 
         draft = self.run(task)
 
-        # Critic review loop
+        # Use the shared critic agent via consultation (no new instance per call)
         try:
-            critic = CriticAgent()
-            draft = critic.improve("cover_letter", draft)
+            improved = self.consult("critic", f"improve cover_letter: {draft}")
+            if improved and len(improved) > 100 and "not found" not in improved.lower():
+                draft = improved
         except Exception:
             pass
 

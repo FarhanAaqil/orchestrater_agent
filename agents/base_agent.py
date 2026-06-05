@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import logging
 from groq import Groq
 try:
     from groq import APITimeoutError, APIConnectionError
@@ -8,8 +9,10 @@ except ImportError:
     APITimeoutError = Exception
     APIConnectionError = Exception
 
-from config import GROQ_API_KEY, MODEL, FAST_MODEL, SMART_MODEL
+from config import GROQ_API_KEY, MODEL, FAST_MODEL, SMART_MODEL, ENABLE_SELF_REFLECTION
 from memory.chroma_store import store_memory, retrieve_memory
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
@@ -88,7 +91,8 @@ class BaseAgent:
                 final_result = result
                 
             # Self-reflection (Internal loop if score < 7)
-            if self.name != "critic" and len(final_result) > 100:
+            # Controlled by ENABLE_SELF_REFLECTION in config.py / .env
+            if ENABLE_SELF_REFLECTION and self.name != "critic" and len(final_result) > 100:
                 reflection_prompt = f"Rate this output from 1-10 on quality and accuracy:\n\n{final_result}\n\nReturn JSON: {{\"score\": X, \"issues\": [...], \"rewritten\": \"...improved version if < 7\"}}"
                 try:
                     ref_resp = self.client.chat.completions.create(
@@ -101,7 +105,7 @@ class BaseAgent:
                     if ref_data.get("score", 10) < 7 and ref_data.get("rewritten"):
                         final_result = ref_data["rewritten"] + "\n\n*(Self-corrected for better quality)*"
                 except Exception:
-                    pass
+                    pass  # Reflection is best-effort — never block the response
 
             self.remember(f"{self.name}_{abs(hash(task))}", final_result, {"task": task[:100]})
             return final_result
@@ -177,7 +181,7 @@ Rules:
         # Dispatch
         if tool_name == "clarify_intent":
             return f"❓ [{self.name}]: {args.get('question', 'Could you clarify your request?')}"
-        
+
         if tool_name == "run":
             return self.run(args.get("task", task))
 
@@ -194,10 +198,8 @@ Rules:
                     res = str(res)
             return res
         except TypeError as e:
-            import traceback
-            print(f"Tool TypeError: {e}")
-            traceback.print_exc()
-            # Arg mismatch — try calling with just the task
+            logger.warning("[%s] Tool '%s' TypeError: %s — retrying with raw task.", self.name, tool_name, e)
+            # Arg mismatch — try calling with just the task string
             try:
                 res = method(task)
                 if not isinstance(res, str):
@@ -207,9 +209,8 @@ Rules:
                         res = str(res)
                 return res
             except Exception as inner_e:
-                print(f"Fallback to task string failed: {inner_e}")
+                logger.error("[%s] Fallback call for '%s' failed: %s", self.name, tool_name, inner_e)
                 return self.run(task)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            logger.error("[%s] Tool '%s' raised: %s", self.name, tool_name, e, exc_info=True)
             return f"❌ [{self.name}] Tool `{tool_name}` failed: {e}"

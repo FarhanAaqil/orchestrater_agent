@@ -92,12 +92,17 @@ Return ONLY valid JSON, nothing else."""
             )
             return result
         except Exception as e:
-            return {"score": 8, "issues": [], "rewritten": None, "error": str(e)}
+            # Don't silently pass bad content — use None score so improve() skips rewrite
+            return {"score": None, "issues": [str(e)], "rewritten": None, "error": str(e)}
 
     def improve(self, content_type: str, content: str) -> str:
         """Main method — silently returns best version of content."""
         result = self.critique(content_type, content)
-        score = result.get("score", 10)
+        score = result.get("score")
+
+        # score is None when the critique call itself failed — return original
+        if score is None:
+            return content
 
         # Return improved version if score is low
         if score < 7:

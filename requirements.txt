@@ -1,14 +1,16 @@
-groq
-chromadb
-streamlit
-python-dotenv
-PyGithub
-SpeechRecognition
-pyttsx3
+# Pinned requirements — generated 2026-06-06
+# To update: pip install --upgrade <package> then update the version here.
+
+groq==1.2.0
+chromadb==1.5.9
+streamlit==1.57.0
+python-dotenv==1.2.2
+PyGithub==2.9.1
+SpeechRecognition==3.14.5
+pyttsx3==2.99
 audio-recorder-streamlit
 pyaudio
-feedparser
-apscheduler
-ddgs
-arxiv
-
+feedparser==6.0.12
+apscheduler==3.11.2
+ddgs==9.14.4
+arxiv==4.0.0

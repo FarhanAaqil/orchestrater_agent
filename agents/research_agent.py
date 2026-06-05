@@ -6,12 +6,14 @@ from database.tracker import (
 import requests
 import os
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from config import PERSONAL_NAME, PERSONAL_EMAIL, AFFILIATION, DEPARTMENT
 
-AAQIL_PROFILE = """
-Author: Farhan Aaqil
-Affiliation: Jayaprakash Narayan College of Engineering, Mahbubnagar, Telangana, India
-Department: Artificial Intelligence and Machine Learning
-Email: fadurrani543@gmail.com
+AUTHOR_PROFILE = f"""
+Author: {PERSONAL_NAME}
+Affiliation: {AFFILIATION}
+Department: {DEPARTMENT}
+Email: {PERSONAL_EMAIL}
 Previous Publication: ML-based Diabetes Prediction (2025)
 """
 
@@ -96,7 +98,7 @@ class ResearchAgent(BaseAgent):
             system_prompt=f"""You are Aaqil's Research Agent.
 You write professional research papers, find reputable journals, and manage submissions.
 Author details:
-{AAQIL_PROFILE}
+{AUTHOR_PROFILE}
 Always write in formal academic style. Follow IEEE/ACM standards.
 Never suggest predatory journals. Only reputable, indexed publishers."""
         )
@@ -148,166 +150,133 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
             f'Paper {c["id"]}: {c["title"]} — {c["abstract"][:200]}'
             for c in citations
         ])
-        
+
         if top_paper_full_text:
             related_work_context += f"\n\nDEEP CONTEXT (Paper 1 Full Text Excerpt):\n{top_paper_full_text}"
-    
-        # Step 2: Write each section separately for depth
-        sections = {}
-    
-        # Abstract + Keywords
-        sections["abstract"] = self.run(f"""Write a comprehensive abstract and keywords for:
-    Project: {project}
-    Description: {description}
-    Results: {results or 'Significant improvement over baseline methods'}
-    Format: IEEE
-    
-    Abstract should be 250-300 words covering:
-    - Problem statement and motivation
-    - Proposed approach/methodology
-    - Key results with specific numbers
-    - Significance and contributions
-    
-    Then list 8-10 IEEE-style keywords.""")
-    
-        # Introduction (3-4 pages worth)
-        sections["introduction"] = self.run(f"""Write a detailed Introduction section for an IEEE research paper:
-    Project: {project}
-    Description: {description}
-    
-    Write 800-1000 words covering:
-    1. Background and problem motivation (cite [{', '.join([str(c['id']) for c in citations[:4]])}])
-    2. Limitations of existing approaches
-    3. Why this problem is important now
-    4. Overview of proposed solution
-    5. Key contributions (bullet list of 4-5 specific contributions)
-    6. Paper organization paragraph
-    
-    Use IEEE citation style [1], [2] etc.
-    Available citations:
-    {citation_text[:2000]}""")
-    
-        # Related Work (4-5 pages)
-        sections["related_work"] = self.run(f"""Write a comprehensive Related Work section:
-    Project: {project}
-    
-    Write 1000-1200 words organized into subsections:
-    2.1 Traditional Approaches
-    2.2 Machine Learning Based Methods
-    2.3 Deep Learning and Neural Approaches
-    2.4 Recent LLM and Agent-Based Systems
-    2.5 Research Gaps
-    
-    For each subsection discuss 2-3 relevant papers with citations.
-    Be critical — explain why existing methods fall short.
-    
-    Available papers to cite:
-    {related_work_context}
-    
-    Use IEEE citation format [1], [2] etc.""")
-    
-        # Theoretical Background (2-3 pages)
-        sections["background"] = self.run(f"""Write a Theoretical Background / Preliminaries section:
-    Project: {project}
-    Methodology: {methodology or 'Machine Learning, Neural Networks, LLM Agents'}
-    
-    Write 600-800 words covering:
-    3.1 Mathematical foundations relevant to this work
-    3.2 Key algorithms and models used
-    3.3 Formal problem definition with mathematical notation
-    3.4 Evaluation metrics with formulas
-    
-    Include LaTeX-style math equations where appropriate.""")
-    
-        # Methodology (6-8 pages — most detailed)
-        sections["methodology"] = self.run(f"""Write an extremely detailed Methodology section:
-    Project: {project}
-    Description: {description}
-    Methodology: {methodology or 'AI/ML pipeline with LLM agents and vector memory'}
-    
-    Write 1500-2000 words covering:
-    4.1 System Architecture Overview
-        - High-level architecture diagram description
-        - Component interaction flow
-    4.2 Data Collection and Preprocessing
-        - Data sources and characteristics
-        - Preprocessing pipeline steps
-        - Feature engineering approach
-    4.3 Model Design and Implementation
-        - Detailed model architecture
-        - Algorithm pseudocode (write actual pseudocode)
-        - Hyperparameter choices and reasoning
-    4.4 Training Strategy
-        - Loss functions with mathematical definitions
-        - Optimization approach
-        - Regularization techniques
-    4.5 Agent Architecture (if applicable)
-        - Agent design and decision flow
-        - Memory mechanism
-        - Tool integration
-    4.6 Implementation Details
-        - Technology stack
-        - Computational requirements
-        - Code architecture
-    
-    Be extremely technical and specific.""")
-    
-        # Experimental Setup (2-3 pages)
-        sections["experiments"] = self.run(f"""Write a detailed Experimental Setup section:
-    Project: {project}
-    
-    Write 600-800 words covering:
-    5.1 Datasets
-        - Dataset description, size, characteristics
-        - Train/validation/test splits
-        - Data augmentation if any
-    5.2 Baseline Methods
-        - List 3-4 baselines being compared against
-        - Brief description of each
-    5.3 Evaluation Metrics
-        - Define all metrics with formulas
-        - Justify metric choices
-    5.4 Implementation Environment
-        - Hardware specifications
-        - Software versions
-        - Reproducibility details
-    5.5 Hyperparameter Configuration
-        - Table of all hyperparameters used""")
-    
-        # Results (4-5 pages)
-        sections["results"] = self.run(f"""Write a comprehensive Results and Discussion section:
-    Project: {project}
-    Results context: {results or 'The proposed method demonstrates significant improvements'}
-    
-    Write 1000-1200 words covering:
-    6.1 Main Results
-        - Comparison table against baselines
-        - Performance on all metrics
-        - Statistical significance
-    6.2 Ablation Study
-        - Impact of each component
-        - Table showing ablation results
-    6.3 Qualitative Analysis
-        - Case studies and examples
-        - Visualization descriptions
-    6.4 Error Analysis
-        - Failure cases
-        - Limitations discovered
-    6.5 Discussion
-        - Why the method works
-        - Surprising findings
-        - Comparison with related work findings""")
-    
-        # Conclusion (1-2 pages)
-        sections["conclusion"] = self.run(f"""Write a Conclusion and Future Work section:
-    Project: {project}
-    
-    Write 400-500 words covering:
-    7.1 Summary of contributions
-    7.2 Key findings
-    7.3 Limitations
-    7.4 Future work directions (at least 5 specific directions)
-    7.5 Broader impact and applications""")
+
+        # Step 2: Write all sections in parallel using a thread pool
+        # This reduces wall-clock time from ~7 serial calls to ~1 parallel batch.
+        section_prompts = {
+            "abstract": f"""Write a comprehensive abstract and keywords for:
+Project: {project}
+Description: {description}
+Results: {results or 'Significant improvement over baseline methods'}
+Format: IEEE
+
+Abstract should be 250-300 words covering:
+- Problem statement and motivation
+- Proposed approach/methodology
+- Key results with specific numbers
+- Significance and contributions
+
+Then list 8-10 IEEE-style keywords.""",
+
+            "introduction": f"""Write a detailed Introduction section for an IEEE research paper:
+Project: {project}
+Description: {description}
+
+Write 800-1000 words covering:
+1. Background and problem motivation (cite [{', '.join([str(c['id']) for c in citations[:4]])}])
+2. Limitations of existing approaches
+3. Why this problem is important now
+4. Overview of proposed solution
+5. Key contributions (bullet list of 4-5 specific contributions)
+6. Paper organization paragraph
+
+Use IEEE citation style [1], [2] etc.
+Available citations:
+{citation_text[:2000]}""",
+
+            "related_work": f"""Write a comprehensive Related Work section:
+Project: {project}
+
+Write 1000-1200 words organized into subsections:
+2.1 Traditional Approaches
+2.2 Machine Learning Based Methods
+2.3 Deep Learning and Neural Approaches
+2.4 Recent LLM and Agent-Based Systems
+2.5 Research Gaps
+
+For each subsection discuss 2-3 relevant papers with citations.
+Be critical — explain why existing methods fall short.
+
+Available papers to cite:
+{related_work_context}
+
+Use IEEE citation format [1], [2] etc.""",
+
+            "background": f"""Write a Theoretical Background / Preliminaries section:
+Project: {project}
+Methodology: {methodology or 'Machine Learning, Neural Networks, LLM Agents'}
+
+Write 600-800 words covering:
+3.1 Mathematical foundations relevant to this work
+3.2 Key algorithms and models used
+3.3 Formal problem definition with mathematical notation
+3.4 Evaluation metrics with formulas
+
+Include LaTeX-style math equations where appropriate.""",
+
+            "methodology": f"""Write an extremely detailed Methodology section:
+Project: {project}
+Description: {description}
+Methodology: {methodology or 'AI/ML pipeline with LLM agents and vector memory'}
+
+Write 1500-2000 words covering:
+4.1 System Architecture Overview
+4.2 Data Collection and Preprocessing
+4.3 Model Design and Implementation
+4.4 Training Strategy
+4.5 Agent Architecture (if applicable)
+4.6 Implementation Details
+
+Be extremely technical and specific.""",
+
+            "experiments": f"""Write a detailed Experimental Setup section:
+Project: {project}
+
+Write 600-800 words covering:
+5.1 Datasets
+5.2 Baseline Methods
+5.3 Evaluation Metrics
+5.4 Implementation Environment
+5.5 Hyperparameter Configuration""",
+
+            "results": f"""Write a comprehensive Results and Discussion section:
+Project: {project}
+Results context: {results or 'The proposed method demonstrates significant improvements'}
+
+Write 1000-1200 words covering:
+6.1 Main Results
+6.2 Ablation Study
+6.3 Qualitative Analysis
+6.4 Error Analysis
+6.5 Discussion""",
+
+            "conclusion": f"""Write a Conclusion and Future Work section:
+Project: {project}
+
+Write 400-500 words covering:
+7.1 Summary of contributions
+7.2 Key findings
+7.3 Limitations
+7.4 Future work directions (at least 5 specific directions)
+7.5 Broader impact and applications""",
+        }
+
+        sections: dict = {}
+        # Use a thread pool to write all sections concurrently
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_section = {
+                executor.submit(self.run, prompt): name
+                for name, prompt in section_prompts.items()
+            }
+            for future in as_completed(future_to_section):
+                section_name = future_to_section[future]
+                try:
+                    sections[section_name] = future.result()
+                except Exception as e:
+                    sections[section_name] = f"*(Section generation failed: {e})*"
     
         # Assemble full paper
         full_paper = f"""# {project}: A Comprehensive Study
@@ -378,8 +347,6 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
     *Format: {format.upper()}*
     """
     
-        # Critic silently reviews abstract and intro
-        # (no need to show this process)
         paper_id = add_paper(
             f"{project} — Research Paper",
             sections["abstract"][:500],
@@ -387,7 +354,7 @@ Never suggest predatory journals. Only reputable, indexed publishers."""
             project,
             format
         )
-    
+
         return {
             "paper_id": paper_id,
             "title": f"{project}: A Comprehensive Study",
@@ -534,7 +501,7 @@ Give a clear SAFE ✅ or AVOID ❌ verdict with reasoning."""
 
 To: {editor}, {journal}
 Paper Title: {paper_title}
-Author: Farhan Aaqil, JPNCE Mahbubnagar, Telangana, India
+Author: {PERSONAL_NAME}, {AFFILIATION}
 Previous Publication: ML-based Diabetes Prediction (2025)
 
 Include:

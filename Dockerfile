@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y \
     portaudio19-dev \
     alsa-utils \
     espeak \
+    espeak-ng \
+    libespeak1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

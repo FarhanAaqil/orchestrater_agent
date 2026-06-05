@@ -8,7 +8,20 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from orchestrator.master import handle, get_health_monitor, get_pipeline
 from scheduler.background import get_notifications, mark_all_read
 from voice.voice_handler import speak, listen
-from database.tracker import save_chat_message, load_chat_history, clear_chat_history, create_chat_session, get_chat_sessions, delete_chat_session
+from database.tracker import save_chat_message, load_chat_history, clear_chat_history, create_chat_session, get_chat_sessions, delete_chat_session, get_tasks, get_projects
+
+
+# ─── Cached DB Queries ─────────────────────────────────────────────
+# Wrapped with st.cache_data so they don't re-query on every Streamlit re-render.
+
+@st.cache_data(ttl=30)
+def _cached_active_tasks():
+    return get_tasks(status="todo")[:3]
+
+
+@st.cache_data(ttl=30)
+def _cached_active_projects():
+    return get_projects(status="active")[:3]
 
 st.set_page_config(page_title="Aaqil AI", page_icon="⚡", layout="wide", initial_sidebar_state="expanded")
 
@@ -287,12 +300,10 @@ if approvals:
             with ac1:
                 if st.button("✅ Approve Action", key=f"app_{a['id']}", type="primary"):
                     st.success(pipeline.approve(a["id"]))
-                    time.sleep(1)
                     st.rerun()
             with ac2:
                 if st.button("❌ Reject Action", key=f"rej_{a['id']}"):
                     st.error(pipeline.reject(a["id"]))
-                    time.sleep(1)
                     st.rerun()
     st.divider()
 
@@ -310,10 +321,8 @@ agent_icons = {
 st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
 if not st.session_state.history:
-    from database.tracker import get_tasks, get_projects
-    
-    active_tasks = get_tasks(status="todo")[:3]
-    active_projects = get_projects(status="active")[:3]
+    active_tasks = _cached_active_tasks()
+    active_projects = _cached_active_projects()
     
     st.markdown("""
         <div style="padding: 1rem 0 2rem;">
@@ -420,6 +429,8 @@ def _run_with_feedback(user_input: str) -> dict:
     """Run the orchestrator. Shows step-by-step status for long operations."""
     u = user_input.lower()
     force_agent = "info" if info_mode else None
+    # Use Streamlit's session ID as the memory partition key
+    session_key = str(st.session_state.get("current_session_id", "default"))
 
     if _is_long_operation(user_input):
         if "paper" in u or "research pipeline" in u:
@@ -453,11 +464,11 @@ def _run_with_feedback(user_input: str) -> dict:
             for step in steps:
                 st.write(f"⏳ {step}")
                 time.sleep(0.25)
-            result = handle(user_input, force_agent=force_agent)
+            result = handle(user_input, force_agent=force_agent, session_id=session_key)
             status.update(label="✅ Done!", state="complete")
     else:
         with st.spinner("Thinking..."):
-            result = handle(user_input, force_agent=force_agent)
+            result = handle(user_input, force_agent=force_agent, session_id=session_key)
 
     return result
 
@@ -490,7 +501,6 @@ if pending_input:
     entry = {"user": pending_input, "agent": result["agent"], "response": result["response"]}
     st.session_state.history.append(entry)
     save_chat_message(st.session_state.current_session_id, pending_input, result["agent"], result["response"])
-    time.sleep(0.3)
     st.rerun()
 
 
@@ -524,5 +534,4 @@ if user_input:
     entry = {"user": user_input, "agent": result["agent"], "response": result["response"]}
     st.session_state.history.append(entry)
     save_chat_message(st.session_state.current_session_id, user_input, result["agent"], result["response"])
-    time.sleep(0.3)
     st.rerun()

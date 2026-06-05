@@ -1,25 +1,60 @@
 from datetime import datetime
 from scheduler.background import add_notification
+from database.tracker import (
+    add_pipeline_approval,
+    get_pending_approvals as db_get_pending_approvals,
+    resolve_approval,
+)
+
 
 class Pipeline:
+    """
+    Multi-agent pipeline engine.
+
+    Approvals are now persisted to SQLite so they survive app restarts.
+    Callbacks are not persisted (they are transient send-actions); approval
+    just marks the row as approved in the DB and triggers the callback if one
+    was registered in the current session.
+    """
+
     def __init__(self, agent_map, critic_agent):
         self.agent_map = agent_map
         self.critic_agent = critic_agent
-        self.approvals = []
-        self._next_id = 1
+        # In-memory callback registry keyed by DB approval ID
+        self._callbacks: dict = {}
 
-    def _queue_approval(self, title, a_type, content, callback=None):
-        a_id = self._next_id
-        self._next_id += 1
-        self.approvals.append({
-            "id": a_id,
-            "title": title,
-            "type": a_type,
-            "content": content,
-            "created_at": datetime.now().isoformat(),
-            "callback": callback
-        })
-        return f"Queued for approval (ID: {a_id}): {title}"
+    # ─── Approval Helpers ─────────────────────────────────────────
+
+    def _queue_approval(self, title: str, a_type: str, content: str, callback=None) -> str:
+        approval_id = add_pipeline_approval(title, a_type, content)
+        if callback:
+            self._callbacks[approval_id] = callback
+        return f"Queued for approval (ID: {approval_id}): {title}"
+
+    def get_pending_approvals(self) -> list:
+        """Return all pending approvals from the database."""
+        return db_get_pending_approvals()
+
+    def approve(self, approval_id: int) -> str:
+        found = resolve_approval(approval_id, "approved")
+        if not found:
+            return f"❌ Approval ID {approval_id} not found."
+        callback = self._callbacks.pop(approval_id, None)
+        if callback:
+            try:
+                callback()
+            except Exception as e:
+                return f"✅ Approved ID {approval_id} (callback error: {e})"
+        return f"✅ Approved ID {approval_id}"
+
+    def reject(self, approval_id: int) -> str:
+        found = resolve_approval(approval_id, "rejected")
+        self._callbacks.pop(approval_id, None)
+        if not found:
+            return f"❌ Approval ID {approval_id} not found."
+        return f"❌ Rejected ID {approval_id}"
+
+    # ─── Pipelines ────────────────────────────────────────────────
 
     def run_apply_pipeline(self, company: str, role: str, jd: str, email: str) -> str:
         """
@@ -34,8 +69,16 @@ class Pipeline:
         # Pre-check: Skill Gap Analysis
         job_match = self.critic_agent.critique_job_match(role, company, jd)
         if job_match.get("score", 10) < 6:
-            add_notification(f"Pipeline paused for {company}: Skill match too low ({job_match.get('score')}/10). Consider learning first.", "warning")
-            return f"❌ Pipeline paused: Your skill match for {role} at {company} is too low ({job_match.get('score')}/10).\n\nReasons: {', '.join(job_match.get('reasons', []))}\n\nRecommendation: Focus on learning before applying."
+            add_notification(
+                f"Pipeline paused for {company}: Skill match too low ({job_match.get('score')}/10). Consider learning first.",
+                "warning"
+            )
+            return (
+                f"❌ Pipeline paused: Your skill match for {role} at {company} is too low "
+                f"({job_match.get('score')}/10).\n\n"
+                f"Reasons: {', '.join(job_match.get('reasons', []))}\n\n"
+                "Recommendation: Focus on learning before applying."
+            )
 
         add_notification(f"Starting apply pipeline for {company}", "system")
 
@@ -56,7 +99,7 @@ class Pipeline:
             cover_letter = self.critic_agent.improve("cover_letter", cover_letter)
             steps.append(f"## Cover Letter\n{cover_letter}")
             add_notification(f"Step 2/2 complete: Cover letter ready for {company}", "success")
-        
+
         full_content = (
             f"**Company:** {company}\n"
             f"**Role:** {role}\n"
@@ -115,16 +158,14 @@ class Pipeline:
             paper_title = paper_result.get("title", project)
             citations = paper_result.get("citations", 0)
             paper_content = paper_result.get("content", "")
-            
+
             add_notification("Step 1/2 complete: Draft generated. Critic reviewing...", "success")
-            
+
             # Critic improvement
-            improved_content = self.critic_agent.improve("research_paper", paper_content[:2000]) # Pass excerpt
-            
+            improved_content = self.critic_agent.improve("research_paper", paper_content[:2000])
+
             # Find journals
-            journal_recs = research.recommend_journals(
-                project, paper_id=paper_id
-            )
+            journal_recs = research.recommend_journals(project, paper_id=paper_id)
             add_notification("Step 2/2 complete: Target journals found.", "success")
 
             full_content = (
@@ -148,23 +189,3 @@ class Pipeline:
             "paper",
             full_content
         )
-
-    def get_pending_approvals(self):
-        return self.approvals
-
-    def approve(self, approval_id):
-        for i, a in enumerate(self.approvals):
-            if a["id"] == approval_id:
-                if a.get("callback"):
-                    a["callback"]()
-                self.approvals.pop(i)
-                return f"✅ Approved ID {approval_id}"
-        return f"❌ Approval ID {approval_id} not found."
-
-    def reject(self, approval_id):
-        for i, a in enumerate(self.approvals):
-            if a["id"] == approval_id:
-                self.approvals.pop(i)
-                return f"❌ Rejected ID {approval_id}"
-        return f"❌ Approval ID {approval_id} not found."
-

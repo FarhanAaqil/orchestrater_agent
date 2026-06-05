@@ -1,9 +1,8 @@
 import os
-DB_PATH = os.path.join(os.path.dirname(__file__), "tracker.db")
-from datetime import datetime
-import sqlite3
-
 import pathlib
+import sqlite3
+from datetime import datetime
+
 DB_PATH = str(pathlib.Path(__file__).parent.parent / "aaqil.db")
 
 def init_db():
@@ -214,15 +213,63 @@ def init_db():
             FOREIGN KEY(session_id) REFERENCES chat_sessions(id)
         )
     """)
-    
+
+    # Pipeline approvals table (persisted so they survive restarts)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS pipeline_approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            type TEXT,
+            content TEXT,
+            created_at TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+
     # Try to add session_id if upgrading existing DB
     try:
         c.execute("ALTER TABLE chat_history ADD COLUMN session_id INTEGER")
     except sqlite3.OperationalError:
-        pass # Column likely exists
+        pass  # Column already exists
 
     conn.commit()
     conn.close()
+
+
+# ─── Pipeline Approvals ───────────────────────────────────────────────────────
+
+def add_pipeline_approval(title: str, a_type: str, content: str) -> int:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO pipeline_approvals (title, type, content, created_at, status) VALUES (?, ?, ?, ?, 'pending')",
+        (title, a_type, content, datetime.now().isoformat())
+    )
+    approval_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return approval_id
+
+
+def get_pending_approvals() -> list:
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT id, title, type, content, created_at FROM pipeline_approvals WHERE status='pending' ORDER BY id")
+    rows = c.fetchall()
+    conn.close()
+    cols = ["id", "title", "type", "content", "created_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def resolve_approval(approval_id: int, status: str) -> bool:
+    """Set approval status to 'approved' or 'rejected'. Returns True if found."""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("UPDATE pipeline_approvals SET status=? WHERE id=?", (status, approval_id))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
 
 
 # ─── Chat Sessions & History ──────────────────────────────────────────────────
