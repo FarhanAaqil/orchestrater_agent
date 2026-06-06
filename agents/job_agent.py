@@ -213,6 +213,7 @@ Return ONLY a JSON array of integers in the same order, e.g. [7, 4, 9, ...]"""
     # ─── Source: RemoteOK ─────────────────────────────────────────────
 
     def search_remoteok(self, keywords: str = "machine learning", limit: int = 15) -> str:
+        limit = int(limit)  # Guard: LLM sometimes passes limit as a string
         cache_key = f"remoteok_{keywords}"
         cached = _cache_get(cache_key)
         if cached:
@@ -325,6 +326,7 @@ Return ONLY a JSON array of integers in the same order, e.g. [7, 4, 9, ...]"""
     # ─── Source: LinkedIn via DuckDuckGo ──────────────────────────────
 
     def search_linkedin_jobs(self, keywords: str = "AI ML intern remote", limit: int = 10) -> str:
+        limit = int(limit)  # Guard: LLM sometimes passes limit as a string
         from utils.web_search import search_web
         cache_key = f"linkedin_{keywords}"
         cached = _cache_get(cache_key)
@@ -413,6 +415,7 @@ Return ONLY a JSON array of integers in the same order, e.g. [7, 4, 9, ...]"""
 
     def search_all(self, keywords: str = "machine learning intern", limit: int = 15) -> str:
         """Search all sources simultaneously and return ranked results."""
+        limit = int(limit)  # Guard: LLM sometimes passes limit as a string
         all_jobs = []
 
         # 1. RemoteOK
