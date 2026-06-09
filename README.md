@@ -320,7 +320,7 @@ send email 1, jobs@example.com
 ## Author
 
 Farhan Aaqil  
-B.Tech AI/ML - JPNCE Mahbubnagar, Telangana, India
+B.Tech AI/ML 
 
 - GitHub: <https://github.com/FarhanAaqil>
 - LinkedIn: <https://linkedin.com/in/farhan-aaqil-4730432bb>
